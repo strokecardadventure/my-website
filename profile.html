@@ -38,8 +38,6 @@
   <button class="back-btn" onclick="location.href='alldata.html'">Back</button>
   </header>
 
-  <!-- Sidebar (same structure as other pages) -->
-
   <h1 style="text-align:center;margin:32px 0 6px;font-weight:900;color:#e53935;font-size:2.3rem;">
     👤 โปรไฟล์ของคุณ
   </h1>
@@ -52,7 +50,7 @@
       <div class="stats">
         <b>Points:</b> <span id="points">0</span>
         <span class="pill"><span id="cardsCount">0</span> cards</span>
-        <!-- เพิ่มแสดง Login Streak -->
+        <!-- Login Streak (ใช้โดย profile.js) -->
         <b>Login Streak:</b> <span id="loginStreak">0</span>
       </div>
     </section>
@@ -105,16 +103,16 @@
       </div>
     </section>
 
-    <!-- Cards -->
+    <!-- Cards (ลบการ render อัตโนมัติออกแล้ว) -->
+    <!-- หากอยากเก็บ placeholder ไว้ ให้ใส่ <div id="cardsGrid" class="grid"></div> -->
     <section class="card">
       <h2>Your Cards <span class="pill"><span id="cardsCount">0</span></span></h2>
-      <div id="cardsGrid" class="grid"></div>
+      <!-- intentionally left empty: cards are not auto-rendered on this page -->
     </section>
   </div>
 
-  <!-- Toast + Debug -->
+  <!-- Toast (keep for messages) -->
   <div id="toast"></div>
-  <div id="debug" class="debug hidden"></div>
 
   <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -136,4 +134,4 @@
   <!-- bump query to break SW cache -->
   <script src="profile.js?v=14"></script>
 </body>
-</html>
+            </html>
