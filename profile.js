@@ -1,4 +1,4 @@
-// profile.js — sidebar + profile + safe username mapping
+// profile.js — sidebar + profile (การ์ด rendering ถูกลบตามคำขอ)
 
 // ===== Firebase handles =====
 var auth = firebase.auth();
@@ -43,14 +43,30 @@ function setupSidebar(){
 }
 
 // ===== Username mapping utilities =====
-// (ไม่เปลี่ยนแปลงในส่วนนี้)
-
 function ensureUsernameMapping(uid, uname){
-  // ...
+  uname = String(uname || "").trim().toLowerCase();
+  if (!uname) return Promise.resolve();
+  return db.collection("usernames").doc(uname)
+           .set({ uid: uid, username: uname }, { merge: true });
 }
 
 function renameUsernameMapping(uid, oldU, newU){
-  // ...
+  oldU = String(oldU || "").trim().toLowerCase();
+  newU = String(newU || "").trim().toLowerCase();
+  if (!/^[a-z0-9._-]{3,20}$/.test(newU)) {
+    return Promise.reject(new Error("Username must be 3–20 chars (a-z, 0-9, dot, _, -)."));
+  }
+  if (oldU === newU) return Promise.resolve();
+
+  return db.collection("usernames").doc(newU).set({ uid: uid, username: newU }, { merge: true })
+    .then(function(){
+      if (!oldU) return;
+      return db.collection("usernames").doc(oldU).get().then(function(s){
+        if (s.exists && s.data() && s.data().uid === uid){
+          return db.collection("usernames").doc(oldU).delete();
+        }
+      });
+    });
 }
 
 /* === Identity hook ===
@@ -68,13 +84,14 @@ function ensureIdentity(user){
     return uref.set({
       username: uname,
       about: data.about || "",
+      // keep cards field untouched — but we won't render them in this page
       cards: Array.isArray(data.cards) ? data.cards : [],
       mission: Array.isArray(data.mission) ? data.mission : Array(15).fill(false),
       points: (typeof data.points === "number") ? data.points : 0,
       quizCount: (typeof data.quizCount === "number") ? data.quizCount : 0,
       quizStreak: (typeof data.quizStreak === "number") ? data.quizStreak : 0,
       quizLastYmd: data.quizLastYmd || null,
-      // ===== เพิ่ม: เก็บค่า loginStreak, loginLastYmd =====
+      // login streak fields (if not present, set defaults)
       loginStreak: (typeof data.loginStreak === "number") ? data.loginStreak : 0,
       loginLastYmd: data.loginLastYmd || null
     }, { merge: true }).then(function(){
@@ -114,30 +131,13 @@ auth.onAuthStateChanged(function(user){
     if ($("points"))   $("points").textContent = String(data.points || 0);
     if ($("quizCount"))  $("quizCount").textContent = String(data.quizCount || 0);
     if ($("quizStreak")) $("quizStreak").textContent = String(data.quizStreak || 0);
-    // ===== เพิ่ม: แสดงค่า loginStreak ในหน้าโปรไฟล์ =====
+    // แสดงค่า loginStreak ในหน้าโปรไฟล์ (ยังคงให้แสดง)
     if ($("loginStreak")) $("loginStreak").textContent = String(data.loginStreak || 0);
 
-    // Cards grid with png->jpg fallback
-    var cards = Array.isArray(data.cards) ? data.cards : [];
-    if ($("cardsCount")) $("cardsCount").textContent = String(cards.length);
-    var grid = $("cardsGrid");
-    if (grid){
-      if (!cards.length){
-        grid.innerHTML = '<div class="muted">No cards yet.</div>';
-      } else {
-        var html = cards.slice()
-          .sort(function(a,b){ return Number(a.replace('card','')) - Number(b.replace('card','')); })
-          .map(function(cId){
-            var n = cId.replace(/card/i,"Card ");
-            return '' +
-              '<div class="cardItem">' +
-              '  <img src="assets/cards/'+cId+'.png" alt="'+n+'" onerror="this.onerror=null;this.src=\'assets/cards/'+cId+'.jpg\'">' +
-              '  <div class="muted">'+n+'</div>' +
-              '</div>';
-          }).join("");
-        grid.innerHTML = html;
-      }
-    }
+    // ---- ส่วนการแสดงกริดการ์ดถูกลบออกตามคำขอ ----
+    // (เดิมมี code ที่อ่าน data.cards และ render grid ลง #cardsGrid แบบ PNG->JPG fallback)
+    // ถ้าต้องการให้แสดงการ์ดอีกครั้ง ให้บอกผม ผมจะคืนส่วนนี้กลับได้แบบปลอดภัย
+    // ----------------------------------------------
 
     // Save username
     var saveUserBtn = $("saveUserBtn");
@@ -194,9 +194,8 @@ auth.onAuthStateChanged(function(user){
     });
 
   }).catch(function(err){
-    var dbg = $("debug");
-    if (dbg){ dbg.classList.remove("hidden"); dbg.textContent = "Profile init error: " + (err && err.message ? err.message : String(err)); }
-    else { console.error(err); }
+    // เอา debug UI ที่เคยแสดงข้อความ error บนหน้าออกแล้ว — จะใช้ console.error แทน
+    console.error("Profile init error:", err && err.message ? err.message : String(err));
   });
 });
 
@@ -205,4 +204,4 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", setupSidebar, { once:true });
 } else {
   setupSidebar();
-    }
+                              }
