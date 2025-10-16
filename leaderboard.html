@@ -44,7 +44,6 @@
   <!-- Sidebar (hamburger) -->
   <header class="sub-header">
   <button class="back-btn" onclick="location.href='alldata.html'">Back</button>
-  
   </header>
 
   <h1 style="text-align:center;margin:32px 0 6px;font-weight:900;color:#e53935;font-size:2.3rem;">
@@ -100,12 +99,14 @@
     }
 
     const board = document.getElementById('board');
-    const tabs = { tabPoints:'points', tabQuizzes:'quizCount', tabStreak:'quizStreak' };
+    // เปลี่ยน tabStreak ให้เป็น field 'loginStreak'
+    const tabs = { tabPoints:'points', tabQuizzes:'quizCount', tabStreak:'loginStreak' };
 
     function paintRow(i,u,byKey){
       const name = (u.username||"").toString() || (u.uid||"").slice(0,6) || "user";
       const main = u[byKey] ?? 0;
-      const sub  = `pts:${u.points||0} • quizzes:${u.quizCount||0} • 🔥${u.quizStreak||0}`;
+      // เปลี่ยน sub ให้แสดงข้อมูล pts, quizzes และ loginStreak
+      const sub  = `pts:${u.points||0} • quizzes:${u.quizCount||0} • 🔥${u.loginStreak||0}`;
       return `<div class="row"><div><b>#${i}</b> @${name}<div class="sub">${sub}</div></div><div style="font-weight:700">${main}</div></div>`;
     }
 
