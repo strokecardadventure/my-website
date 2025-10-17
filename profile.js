@@ -121,6 +121,12 @@ auth.onAuthStateChanged(function(user){
   // Show UID ASAP so UI never stays blank
   if ($("uid")) $("uid").textContent = user.uid;
 
+  // <<< เพิ่ม: ถ้ามีฟังก์ชัน global ให้เรียกอัปเดต streak ก่อนโหลด UI >>>>
+  if (window.updateLoginStreakIfNeeded) {
+    try { window.updateLoginStreakIfNeeded(user); } catch(e){ console.warn('profile: update streak failed', e); }
+  }
+  // <<< end addition >>>
+
   ensureIdentity(user).then(function(res){
     var data = res.data || {};
     var uname = res.uname || ((user.email||"").split("@")[0] || "user");
@@ -135,7 +141,6 @@ auth.onAuthStateChanged(function(user){
     if ($("loginStreak")) $("loginStreak").textContent = String(data.loginStreak || 0);
 
     // ---- เพิ่ม listener แบบ realtime ให้ profile อัปเดตเมื่อ doc เปลี่ยน ----
-    // ถ้ามี listener เก่า เราจะเก็บ handle ไว้แล้วไม่สร้างซ้ำ
     if (!window.__profileUserSnapUnsub) {
       window.__profileUserSnapUnsub = db.collection("users").doc(user.uid)
         .onSnapshot(function(s){
@@ -145,8 +150,6 @@ auth.onAuthStateChanged(function(user){
           if ($("loginStreak")) $("loginStreak").textContent = String(live.loginStreak || 0);
           if ($("quizCount")) $("quizCount").textContent = String(live.quizCount || 0);
           if ($("quizStreak")) $("quizStreak").textContent = String(live.quizStreak || 0);
-          // หากต้องการแสดงจำนวนการ์ดอีกครั้ง ให้ปลดคอมเมนต์ด้านล่าง
-          // if ($("cardsCount")) $("cardsCount").textContent = String((Array.isArray(live.cards)?live.cards.length:0));
         }, function(err){
           console.error("profile: realtime listen error", err && err.message ? err.message : err);
         });
@@ -208,7 +211,6 @@ auth.onAuthStateChanged(function(user){
     });
 
   }).catch(function(err){
-    // เอา debug UI ที่เคยแสดงข้อความ error บนหน้าออกแล้ว — จะใช้ console.error แทน
     console.error("Profile init error:", err && err.message ? err.message : String(err));
   });
 });
@@ -218,4 +220,4 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", setupSidebar, { once:true });
 } else {
   setupSidebar();
-}
+    }
