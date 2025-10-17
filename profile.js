@@ -134,9 +134,23 @@ auth.onAuthStateChanged(function(user){
     // แสดงค่า loginStreak ในหน้าโปรไฟล์ (ยังคงให้แสดง)
     if ($("loginStreak")) $("loginStreak").textContent = String(data.loginStreak || 0);
 
-    // ---- ส่วนการแสดงกริดการ์ดถูกลบออกตามคำขอ ----
-    // (เดิมมี code ที่อ่าน data.cards และ render grid ลง #cardsGrid แบบ PNG->JPG fallback)
-    // ถ้าต้องการให้แสดงการ์ดอีกครั้ง ให้บอกผม ผมจะคืนส่วนนี้กลับได้แบบปลอดภัย
+    // ---- เพิ่ม listener แบบ realtime ให้ profile อัปเดตเมื่อ doc เปลี่ยน ----
+    // ถ้ามี listener เก่า เราจะเก็บ handle ไว้แล้วไม่สร้างซ้ำ
+    if (!window.__profileUserSnapUnsub) {
+      window.__profileUserSnapUnsub = db.collection("users").doc(user.uid)
+        .onSnapshot(function(s){
+          if (!s.exists) return;
+          var live = s.data() || {};
+          if ($("points"))   $("points").textContent = String(live.points || 0);
+          if ($("loginStreak")) $("loginStreak").textContent = String(live.loginStreak || 0);
+          if ($("quizCount")) $("quizCount").textContent = String(live.quizCount || 0);
+          if ($("quizStreak")) $("quizStreak").textContent = String(live.quizStreak || 0);
+          // หากต้องการแสดงจำนวนการ์ดอีกครั้ง ให้ปลดคอมเมนต์ด้านล่าง
+          // if ($("cardsCount")) $("cardsCount").textContent = String((Array.isArray(live.cards)?live.cards.length:0));
+        }, function(err){
+          console.error("profile: realtime listen error", err && err.message ? err.message : err);
+        });
+    }
     // ----------------------------------------------
 
     // Save username
@@ -204,4 +218,4 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", setupSidebar, { once:true });
 } else {
   setupSidebar();
-                              }
+}
