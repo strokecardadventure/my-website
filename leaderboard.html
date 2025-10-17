@@ -99,45 +99,58 @@
     }
 
     const board = document.getElementById('board');
-    // เปลี่ยน tabStreak ให้เป็น field 'loginStreak'
+    // tab -> field mapping
     const tabs = { tabPoints:'points', tabQuizzes:'quizCount', tabStreak:'loginStreak' };
 
     function paintRow(i,u,byKey){
       const name = (u.username||"").toString() || (u.uid||"").slice(0,6) || "user";
       const main = u[byKey] ?? 0;
-      // เปลี่ยน sub ให้แสดงข้อมูล pts, quizzes และ loginStreak
       const sub  = `pts:${u.points||0} • quizzes:${u.quizCount||0} • 🔥${u.loginStreak||0}`;
       return `<div class="row"><div><b>#${i}</b> @${name}<div class="sub">${sub}</div></div><div style="font-weight:700">${main}</div></div>`;
     }
 
-    async function load(by='points'){
+    // manage subscription so only one realtime listener lives at a time
+    let boardUnsubscribe = null;
+
+    function subscribeBoard(by='points'){
+      // cleanup old listener
+      if (typeof boardUnsubscribe === 'function') {
+        try { boardUnsubscribe(); } catch(e){ /* ignore */ }
+        boardUnsubscribe = null;
+      }
       board.innerHTML = '<div class="row">กำลังโหลด…</div>';
-      try{
-        const snap = await db.collection('users').orderBy(by,'desc').limit(100).get();
-        if (snap.empty){ board.innerHTML = '<div class="row">ยังไม่มีข้อมูล</div>'; return; }
-        let i=1, html='';
-        snap.forEach(d=>{
+
+      // create new realtime listener
+      const q = db.collection('users').orderBy(by,'desc').limit(100);
+      boardUnsubscribe = q.onSnapshot((snap) => {
+        if (!snap || snap.empty) {
+          board.innerHTML = '<div class="row">ยังไม่มีข้อมูล</div>';
+          return;
+        }
+        let i = 1, html = '';
+        snap.forEach(d => {
           const u = d.data() || {}; u.uid = d.id;
           html += paintRow(i++, u, by);
         });
         board.innerHTML = html;
-      }catch(e){
-        board.innerHTML = `<div class="row">โหลดไม่สำเร็จ: ${e.message||e}</div>`;
-      }
+      }, (err) => {
+        board.innerHTML = `<div class="row">โหลดไม่สำเร็จ: ${err.message || err}</div>`;
+      });
     }
 
     for (const id in tabs){
       document.getElementById(id).onclick = (ev)=>{
         document.querySelectorAll('.tabs .btn').forEach(b=>b.classList.remove('active'));
         ev.currentTarget.classList.add('active');
-        load(tabs[id]);
+        subscribeBoard(tabs[id]);
       };
     }
 
     auth.onAuthStateChanged(u=>{
       if (!u){ location.href='login.html'; return; }
       setupSidebar();
-      load('points');
+      // subscribe initially by points
+      subscribeBoard('points');
     });
   </script>
 </body>
