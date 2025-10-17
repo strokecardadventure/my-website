@@ -85,8 +85,8 @@
       const sidebar = document.getElementById("sidebar");
       const overlay = document.getElementById("overlay");
       const closeBtn= document.getElementById("close-sidebar");
-      const open = ()=>{ sidebar.classList.add("open"); overlay.classList.add("active"); };
-      const close= ()=>{ sidebar.classList.remove("open"); overlay.classList.remove("active"); };
+      const open = ()=>{ if(sidebar) sidebar.classList.add("open"); if(overlay) overlay.classList.add("active"); };
+      const close= ()=>{ if(sidebar) sidebar.classList.remove("open"); if(overlay) overlay.classList.remove("active"); };
       openBtn?.addEventListener("click", open);
       closeBtn?.addEventListener("click", close);
       overlay?.addEventListener("click", close);
@@ -134,9 +134,74 @@
       };
     }
 
-    auth.onAuthStateChanged(u=>{
+    // --------- เพิ่ม: ฟังก์ชันตรวจและอัปเดต streak (เรียก global ถ้ามี, ถ้าไม่มีก็ใช้ fallback) ----------
+    // helper: สร้าง YYYY-MM-DD แบบ local
+    function localYmd(d = new Date()){
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${day}`;
+    }
+
+    async function ensureStreakUpdated(u){
+      if (!u) return;
+      // ถ้ามี global helper ที่ login.js ลงไว้ ให้เรียก (ปลอดภัย ถ้าล้มเหลวจะ fallback)
+      if (window.updateLoginStreakIfNeeded) {
+        try {
+          await window.updateLoginStreakIfNeeded(u);
+          return;
+        } catch (e) {
+          console.warn('call global updateLoginStreakIfNeeded failed:', e);
+        }
+      }
+
+      // Fallback inline (same logic used in login.js)
+      try {
+        const uref = db.collection('users').doc(u.uid);
+        const now = new Date();
+        const ymdToday = localYmd(now);
+        const yesterday = new Date(now);
+        yesterday.setDate(now.getDate() - 1);
+        const ymdYester = localYmd(yesterday);
+
+        const snap = await uref.get();
+        let loginStreak = 1;
+        let pointsToAdd = 0;
+
+        if (snap.exists) {
+          const data = snap.data() || {};
+          const lastYmd = data.loginLastYmd || null;
+          const prevStreak = Number(data.loginStreak || 0);
+
+          if (lastYmd === ymdToday) {
+            // already credited today
+            return;
+          } else if (lastYmd === ymdYester) {
+            loginStreak = prevStreak + 1;
+            pointsToAdd = loginStreak;
+          } else {
+            loginStreak = 1;
+            pointsToAdd = 1;
+          }
+        } else {
+          loginStreak = 1;
+          pointsToAdd = 1;
+        }
+
+        const update = { loginStreak, loginLastYmd: ymdToday };
+        if (pointsToAdd > 0) update.points = firebase.firestore.FieldValue.increment(pointsToAdd);
+        await uref.set(update, { merge: true });
+      } catch (err) {
+        console.warn('leaderboard: fallback streak update failed', err);
+      }
+    }
+    // -----------------------------------------------------------------------------------------------
+
+    // ตอนเช็กสถานะผู้ใช้ ให้เรียก ensureStreakUpdated ก่อน load leaderboard
+    auth.onAuthStateChanged(async (u)=>{
       if (!u){ location.href='login.html'; return; }
       setupSidebar();
+      try { await ensureStreakUpdated(u); } catch(e){ console.warn(e); }
       load('points');
     });
   </script>
