@@ -35,21 +35,21 @@ async function loadCardRates() {
     } else {
       // fallback values (if doc missing)
       cardRates = {
-        card1: 15, card2: 18, card3: 17, card4: 25, card5: 22, card6: 18,
-        card7: -6, card8: -7, card9: -11, card10: -21, card11: -5, card12: -8,
-        card13: -15, card14: -19, card15: -15, card16: -22, card17: -14, card18: -18,
-        card19: 26, card20: 27, card21: 23, card22: 28, card23: 26, card24: 29,
-        card25: 30, card26: 31, card27: 32, card28: 0, card29: 0, card30: 0
+        card1: 2, card2: 1, card3: 3, card4: 4, card5: 5, card6: 6,
+        card7: -2, card8: -3, card9: -5, card10: -2, card11: -1, card12: -3,
+        card13: -1, card14: -4, card15: -1, card16: -2, card17: -4, card18: -1,
+        card19: 8, card20: 7, card21: 10, card22: 8, card23: 6, card24: 9,
+        card25: 10, card26: 6, card27: 11, card28: 0, card29: 0, card30: 0
       };
     }
   } catch (e) {
     console.warn('loadCardRates failed', e);
     cardRates = {
-      card1: 15, card2: 18, card3: 17, card4: 25, card5: 22, card6: 18,
-      card7: -6, card8: -7, card9: -11, card10: -21, card11: -5, card12: -8,
-      card13: -15, card14: -19, card15: -15, card16: -22, card17: -14, card18: -18,
-      card19: 26, card20: 27, card21: 23, card22: 28, card23: 26, card24: 29,
-      card25: 30, card26: 31, card27: 32, card28: 0, card29: 0, card30: 0
+      card1: 2, card2: 1, card3: 3, card4: 4, card5: 5, card6: 6,
+        card7: -2, card8: -3, card9: -5, card10: -2, card11: -1, card12: -3,
+        card13: -1, card14: -4, card15: -1, card16: -2, card17: -4, card18: -1,
+        card19: 8, card20: 7, card21: 10, card22: 8, card23: 6, card24: 9,
+        card25: 10, card26: 6, card27: 11, card28: 0, card29: 0, card30: 0
     };
   }
 }
