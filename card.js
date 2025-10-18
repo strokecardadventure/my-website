@@ -1,10 +1,11 @@
-// ========== card.js (no reset + self-heal) — UPDATED WITH PASSIVE SCA SUPPORT ==========
+// ========== card.js (no reset + self-heal) — FULL, with passive SCA support ==========
 
 const byId = (id) => document.getElementById(id);
 const TOTAL_CARDS = 30;
 
-/* ---------- Firebase handles are from global page: auth, db (compat) ---------- */
-/* If not defined earlier, these will throw — your pages already load firebase libs. */
+/* ---------- Firebase handles are from global page: auth, db (compat) ----------
+   Assumes firebase, firebase.auth(), firebase.firestore() loaded globally.
+*/
 
 /* ---------- Small toast fallback ---------- */
 function toast(msg){
@@ -29,77 +30,26 @@ async function loadCardRates() {
   try {
     const ref = db.collection('cardRates').doc('rates');
     const snap = await ref.get();
-    if (snap.exists) cardRates = snap.data() || {};
-    else {
-      // fallback default rates (from user's list)
+    if (snap.exists) {
+      cardRates = snap.data() || {};
+    } else {
+      // fallback values (if doc missing)
       cardRates = {
-        card1: 15,
-        card2: 18,
-        card3: 17,
-        card4: 25,
-        card5: 22,
-        card6: 18,
-        card7: -6,
-        card8: -7,
-        card9: -11,
-        card10: -21,
-        card11: -5,
-        card12: -8,
-        card13: -15,
-        card14: -19,
-        card15: -15,
-        card16: -22,
-        card17: -14,
-        card18: -18,
-        card19: 26,
-        card20: 27,
-        card21: 23,
-        card22: 28,
-        card23: 26,
-        card24: 29,
-        card25: 30,
-        card26: 31,
-        card27: 32,
-        // no values provided for 28-30 in your list — default 0
-        card28: 0,
-        card29: 0,
-        card30: 0
+        card1: 15, card2: 18, card3: 17, card4: 25, card5: 22, card6: 18,
+        card7: -6, card8: -7, card9: -11, card10: -21, card11: -5, card12: -8,
+        card13: -15, card14: -19, card15: -15, card16: -22, card17: -14, card18: -18,
+        card19: 26, card20: 27, card21: 23, card22: 28, card23: 26, card24: 29,
+        card25: 30, card26: 31, card27: 32, card28: 0, card29: 0, card30: 0
       };
     }
   } catch (e) {
     console.warn('loadCardRates failed', e);
-    // fallback same map
     cardRates = {
-      card1: 15,
-      card2: 18,
-      card3: 17,
-      card4: 25,
-      card5: 22,
-      card6: 18,
-      card7: -6,
-      card8: -7,
-      card9: -11,
-      card10: -21,
-      card11: -5,
-      card12: -8,
-      card13: -15,
-      card14: -19,
-      card15: -15,
-      card16: -22,
-      card17: -14,
-      card18: -18,
-      card19: 26,
-      card20: 27,
-      card21: 23,
-      card22: 28,
-      card23: 26,
-      card24: 29,
-      card25: 30,
-      card26: 31,
-      card27: 32,
-      card28: 0,
-      card29: 0,
-      card30: 0
+      card1: 15, card2: 18, card3: 17, card4: 25, card5: 22, card6: 18,
+      card7: -6, card8: -7, card9: -11, card10: -21, card11: -5, card12: -8,
+      card13: -15, card14: -19, card15: -15, card16: -22, card17: -14, card18: -18,
+      card19: 26, card20: 27, card21: 23, card22: 28, card23: 26, card24: 29,
+      card25: 30, card26: 31, card27: 32, card28: 0, card29: 0, card30: 0
     };
   }
 }
@@ -117,7 +67,9 @@ function computePendingSCA(lastCollectionTs, nowDate = new Date()) {
   if (!lastCollectionTs) return 0;
   let lastMs;
   try {
-    lastMs = (typeof lastCollectionTs.toDate === 'function') ? lastCollectionTs.toDate().getTime() : new Date(lastCollectionTs).getTime();
+    lastMs = (typeof lastCollectionTs.toDate === 'function')
+      ? lastCollectionTs.toDate().getTime()
+      : new Date(lastCollectionTs).getTime();
   } catch (e) { lastMs = new Date().getTime(); }
   const deltaSeconds = Math.max(0, (nowDate.getTime() - lastMs) / 1000);
   const baseRate = computeTotalRateForOwned(ownedSet);
@@ -130,11 +82,10 @@ function computePendingSCA(lastCollectionTs, nowDate = new Date()) {
     const hud = document.createElement('div');
     hud.id = 'scaHud';
     hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
-    // Use coin image. Make sure assets/coin-gold.png exists.
+    // default uses image coin if exists; else you can swap to emoji '🪙' in code.
     const coinImgHTML = '<img src="assets/coin-gold.png" style="width:18px;vertical-align:middle;margin-right:6px">';
-    // Removed the "SCA coins:" text — collect button will be image-only as requested
-    hud.innerHTML = `${coinImgHTML} <span id="scaPending">0</span>
-      <button id="collectAllBtn" style="margin-left:8px;padding:6px;border-radius:50%;border:none;background:transparent;cursor:pointer">${coinImgHTML}</button>
+    hud.innerHTML = `${coinImgHTML} <span style="font-weight:800">SCA coins:</span> <span id="scaPending">0</span>
+      <button id="collectAllBtn" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
       <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay">1.00</span></div>`;
     document.body.appendChild(hud);
   }
@@ -205,10 +156,10 @@ function setupSidebar() {
   const open  = () => { sidebar.classList.add("open");  overlay.classList.add("active"); };
   const close = () => { sidebar.classList.remove("open"); overlay.classList.remove("active"); };
 
-  toggleBtn?.addEventListener("click", open);
-  closeBtn?.addEventListener("click", close);
-  overlay?.addEventListener("click", close);
-  logout?.addEventListener("click", (e)=>{ e.preventDefault(); auth.signOut().then(()=>location.href="login.html"); });
+  if (toggleBtn) toggleBtn.addEventListener("click", open);
+  if (closeBtn)  closeBtn.addEventListener("click", close);
+  if (overlay)   overlay.addEventListener("click", close);
+  if (logout)    logout.addEventListener("click", (e)=>{ e.preventDefault(); auth.signOut().then(()=>location.href="login.html"); });
 
   document.querySelectorAll("#sidebar .menu-item a").forEach(a=>{
     if (!a.closest("#logout-link")) a.addEventListener("click", close);
@@ -253,7 +204,7 @@ function renderGrid(ownedSetLocal, borrowedSet) {
 
         // get rate for this card (from cardRates)
         const rate = (cardRates && cardRates[cid]) ? Number(cardRates[cid]) : 0;
-        // use coin image HTML (make sure assets/coin-gold.png exists)
+        // use coin image HTML (make sure assets/coin-gold.png exists) — fallback could be emoji
         const coinIcon = '<img src="assets/coin-gold.png" style="width:20px;vertical-align:middle;margin-right:8px">';
 
         showModal(
@@ -276,29 +227,34 @@ function renderAllLocked() { renderGrid(new Set(), new Set()); }
 
 /* ---------- Self-heal from cardKeys ---------- */
 async function healOwnedCards(uid) {
-  const q = await db.collection('cardKeys').where('claimedBy','==',uid).limit(200).get();
-  if (q.empty) return false;
-  const ids = [];
-  q.forEach(d => { const v = d.data(); if (v && typeof v.cardId === 'string') ids.push(v.cardId); });
-  if (!ids.length) return false;
+  try {
+    const q = await db.collection('cardKeys').where('claimedBy','==',uid).limit(200).get();
+    if (q.empty) return false;
+    const ids = [];
+    q.forEach(d => { const v = d.data(); if (v && typeof v.cardId === 'string') ids.push(v.cardId); });
+    if (!ids.length) return false;
 
-  const ref = db.collection('users').doc(uid);
-  for (let i=0;i<ids.length;i+=10){
-    const slice = ids.slice(i, i+10);
-    await ref.set({ cards: firebase.firestore.FieldValue.arrayUnion(...slice) }, { merge:true });
+    const ref = db.collection('users').doc(uid);
+    for (let i=0;i<ids.length;i+=10){
+      const slice = ids.slice(i, i+10);
+      await ref.set({ cards: firebase.firestore.FieldValue.arrayUnion(...slice) }, { merge:true });
+    }
+    return true;
+  } catch (e) {
+    console.warn('healOwnedCards failed', e);
+    return false;
   }
-  return true;
 }
 
-/* ---------- Self-heal for feedback reward (card25 + +5) ---------- */
+/* ---------- Self-heal for feedback reward (card30 + +5) ---------- */
 async function ensureFeedbackAwardApplied(uid, data){
   const flags = data.flags || {};
   if (!flags.feedbackAwardGiven) return;
 
   const cards = Array.isArray(data.cards) ? data.cards : [];
-  const hasCard25 = cards.includes('card30');
+  const hasCard30 = cards.includes('card30');
 
-  if (hasCard25) {
+  if (hasCard30) {
     if (!flags.feedbackAwardPatched) {
       await db.collection('users').doc(uid).set({ flags: { feedbackAwardPatched: true } }, { merge: true });
     }
@@ -355,7 +311,7 @@ auth.onAuthStateChanged(async (user) => {
         const cards = Array.isArray(data.cards) ? data.cards : [];
         ownedSet.clear(); cards.forEach(c => ownedSet.add(c));
         renderGrid(ownedSet, borrowedSet);
-      } catch {}
+      } catch (e) { console.warn('initial render failed', e); }
     }
   }, 1500);
 
@@ -363,8 +319,10 @@ auth.onAuthStateChanged(async (user) => {
     const data  = snap.exists ? (snap.data() || {}) : {};
     const cards = Array.isArray(data.cards) ? data.cards : [];
 
+    // self-heal feedback award if needed
     ensureFeedbackAwardApplied(user.uid, data).catch(()=>{});
 
+    // try heal cards from cardKeys if empty (once)
     if (!healedOnce && cards.length === 0) {
       healedOnce = true;
       const healed = await healOwnedCards(user.uid);
@@ -385,6 +343,7 @@ auth.onAuthStateChanged(async (user) => {
     startPendingUpdater();
   });
 
+  // shared collection: borrowed cards
   docRef.collection("shared").onSnapshot((qs) => {
     borrowedSet.clear();
     qs.forEach(d => {
