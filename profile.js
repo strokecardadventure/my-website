@@ -1,4 +1,5 @@
 // profile.js — sidebar + profile (การ์ด rendering ถูกลบตามคำขอ)
+// เพิ่มระบบ SCA (passive accumulation) ในไฟล์นี้ (suffix _p เพื่อแยกจาก mission.js)
 
 // ===== Firebase handles =====
 var auth = firebase.auth();
@@ -112,6 +113,94 @@ function ensureIdentity(user){
   });
 }
 
+// ===== SCA passive helpers for profile page (suffix _p) =====
+let cardRates_p = null;
+let ownedSet_p = new Set();
+let scaMultiplier_p = 1.0;
+let lastCollection_p = null;
+let pendingUpdater_p = null;
+
+async function loadCardRates_p(){
+  try {
+    const ref = db.collection('cardRates').doc('rates');
+    const snap = await ref.get();
+    cardRates_p = snap.exists ? (snap.data() || {}) : { card1:15, card2:18 };
+  } catch (e) {
+    console.warn('loadCardRates_p', e);
+    cardRates_p = { card1:15, card2:18 };
+  }
+}
+function computeTotalRateForOwned_p(setOwned) {
+  if (!cardRates_p) return 0;
+  let s = 0;
+  setOwned.forEach(cid => { if (cardRates_p[cid] !== undefined) s += Number(cardRates_p[cid])||0; });
+  return s;
+}
+function computePendingSCA_p(lastCollectionTs, nowDate = new Date()){
+  if (!lastCollectionTs) return 0;
+  let lastMs;
+  try {
+    lastMs = (typeof lastCollectionTs.toDate === 'function') ? lastCollectionTs.toDate().getTime() : new Date(lastCollectionTs).getTime();
+  } catch(e){ lastMs = new Date().getTime(); }
+  const deltaSeconds = Math.max(0, (nowDate.getTime() - lastMs) / 1000);
+  const baseRate = computeTotalRateForOwned_p(ownedSet_p);
+  return deltaSeconds * baseRate * (Number(scaMultiplier_p) || 1);
+}
+
+(function injectHud_p(){
+  if (!document.getElementById('scaHud_p')) {
+    const hud = document.createElement('div');
+    hud.id = 'scaHud_p';
+    hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
+    hud.innerHTML = `SCA: <span id="scaPending_p">0</span>
+      <button id="collectAllBtn_p" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
+      <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay_p">1.00</span></div>`;
+    document.body.appendChild(hud);
+  }
+})();
+
+function renderPendingHud_p(){
+  const el = document.getElementById('scaPending_p');
+  const multEl = document.getElementById('scaMultiplierDisplay_p');
+  if (!el) return;
+  const pending = computePendingSCA_p(lastCollection_p, new Date());
+  el.textContent = (pending >= 100 ? Math.round(pending) : pending.toFixed(1));
+  if (multEl) multEl.textContent = (Number(scaMultiplier_p)||1).toFixed(2);
+}
+function startPendingUpdater_p(){ stopPendingUpdater_p(); pendingUpdater_p = setInterval(renderPendingHud_p,1000); renderPendingHud_p(); }
+function stopPendingUpdater_p(){ if (pendingUpdater_p){ clearInterval(pendingUpdater_p); pendingUpdater_p = null; } }
+
+async function collectAllToUser_p(uid){
+  try {
+    const userRef = db.collection('users').doc(uid);
+    const pending = computePendingSCA_p(lastCollection_p, new Date());
+    const pendingRounded = Math.round(pending);
+    if (pendingRounded <= 0) { toast('ยังไม่มีคะแนนให้รับ'); return; }
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) throw new Error('User doc missing');
+      tx.update(userRef, {
+        points: firebase.firestore.FieldValue.increment(pendingRounded),
+        lastCollection: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    lastCollection_p = new Date();
+    renderPendingHud_p();
+    toast(`รับ ${pendingRounded} SCA เรียบร้อย`);
+  } catch (e) {
+    console.error('collectAll_p fail', e);
+    toast('ไม่สามารถรับคะแนนได้ ลองอีกครั้ง');
+  }
+}
+
+document.addEventListener('click', (ev) => {
+  if (ev.target && ev.target.id === 'collectAllBtn_p') {
+    const user = firebase.auth().currentUser;
+    if (!user) { location.href='login.html'; return; }
+    collectAllToUser_p(user.uid);
+  }
+});
+
 // ===== App =====
 auth.onAuthStateChanged(function(user){
   if (!user){ location.href = "login.html"; return; }
@@ -121,13 +210,13 @@ auth.onAuthStateChanged(function(user){
   // Show UID ASAP so UI never stays blank
   if ($("uid")) $("uid").textContent = user.uid;
 
-  // <<< เพิ่ม: ถ้ามีฟังก์ชัน global ให้เรียกอัปเดต streak ก่อนโหลด UI >>>>
+  // <<< เพิ่ม: ถ้ามีฟังก์ชัน global ให้เรียกอัปเดต streakก่อนโหลด UI >>>>
   if (window.updateLoginStreakIfNeeded) {
     try { window.updateLoginStreakIfNeeded(user); } catch(e){ console.warn('profile: update streak failed', e); }
   }
   // <<< end addition >>>
 
-  ensureIdentity(user).then(function(res){
+  ensureIdentity(user).then(async function(res){
     var data = res.data || {};
     var uname = res.uname || ((user.email||"").split("@")[0] || "user");
 
@@ -137,11 +226,12 @@ auth.onAuthStateChanged(function(user){
     if ($("points"))   $("points").textContent = String(data.points || 0);
     if ($("quizCount"))  $("quizCount").textContent = String(data.quizCount || 0);
     if ($("quizStreak")) $("quizStreak").textContent = String(data.quizStreak || 0);
-    // แสดงค่า loginStreak ในหน้าโปรไฟล์ (ยังคงให้แสดง)
     if ($("loginStreak")) $("loginStreak").textContent = String(data.loginStreak || 0);
 
-    // ---- เพิ่ม listener แบบ realtime ให้ profile อัปเดตเมื่อ doc เปลี่ยน ----
+    // ---- realtime listener for profile and SCA ----
     if (!window.__profileUserSnapUnsub) {
+      // ensure cardRates loaded (non-blocking)
+      loadCardRates_p().catch(()=>{});
       window.__profileUserSnapUnsub = db.collection("users").doc(user.uid)
         .onSnapshot(function(s){
           if (!s.exists) return;
@@ -150,8 +240,17 @@ auth.onAuthStateChanged(function(user){
           if ($("loginStreak")) $("loginStreak").textContent = String(live.loginStreak || 0);
           if ($("quizCount")) $("quizCount").textContent = String(live.quizCount || 0);
           if ($("quizStreak")) $("quizStreak").textContent = String(live.quizStreak || 0);
+
+          // update SCA local state
+          const cards = Array.isArray(live.cards) ? live.cards : [];
+          ownedSet_p.clear(); cards.forEach(c => ownedSet_p.add(c));
+          scaMultiplier_p = (typeof live.scaMultiplier === 'number') ? live.scaMultiplier : scaMultiplier_p || 1.0;
+          lastCollection_p = live.lastCollection || lastCollection_p || new Date();
+          startPendingUpdater_p();
         }, function(err){
           console.error("profile: realtime listen error", err && err.message ? err.message : err);
+          // still try start updater with whatever we have
+          startPendingUpdater_p();
         });
     }
     // ----------------------------------------------
@@ -220,4 +319,4 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", setupSidebar, { once:true });
 } else {
   setupSidebar();
-    }
+                  }
