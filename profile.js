@@ -15,6 +15,26 @@ function toast(t){
   setTimeout(function(){ toastEl.classList.remove("show"); }, 1600);
 }
 
+// ===== Utility: Number abbreviation =====
+function formatNumberAbbr(n){
+  var num = Number(n) || 0;
+  var neg = num < 0;
+  num = Math.abs(num);
+  if (num >= 1e9){
+    var v = Math.round((num / 1e9) * 10) / 10;
+    return (neg ? '-' : '') + (v % 1 === 0 ? String(v.toFixed(0)) + 'b' : String(v).replace(/\.0$/,'') + 'b');
+  }
+  if (num >= 1e6){
+    var v = Math.round((num / 1e6) * 10) / 10;
+    return (neg ? '-' : '') + (v % 1 === 0 ? String(v.toFixed(0)) + 'm' : String(v).replace(/\.0$/,'') + 'm');
+  }
+  if (num >= 1e3){
+    var v = Math.round((num / 1e3) * 10) / 10;
+    return (neg ? '-' : '') + (v % 1 === 0 ? String(v.toFixed(0)) + 'k' : String(v).replace(/\.0$/,'') + 'k');
+  }
+  return (neg ? '-' : '') + String(num);
+}
+
 // ===== Sidebar (match other pages; no optional chaining) =====
 function setupSidebar(){
   var toggleBtn = $("menu-toggle");
@@ -153,7 +173,7 @@ function computePendingSCA_p(lastCollectionTs, nowDate = new Date()){
     hud.id = 'scaHud_p';
     hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
     const coinImgHTML_p = '<img src="assets/coin-gold.png" style="width:18px;vertical-align:middle;margin-right:6px">';
-    hud.innerHTML = `${coinImgHTML_p} <span style="font-weight:800">SCA coins:</span> <span id="scaPending_p">0</span>
+    hud.innerHTML = `${coinImgHTML_p} <span style="font-weight:800">SCA:</span> <span id="scaPending_p">0</span>
       <button id="collectAllBtn_p" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
       <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay_p">1.00</span></div>`;
     document.body.appendChild(hud);
@@ -165,7 +185,8 @@ function renderPendingHud_p(){
   const multEl = document.getElementById('scaMultiplierDisplay_p');
   if (!el) return;
   const pending = computePendingSCA_p(lastCollection_p, new Date());
-  el.textContent = (pending >= 100 ? Math.round(pending) : pending.toFixed(1));
+  const displayVal = pending >= 100 ? Math.round(pending) : Number(pending.toFixed(1));
+  el.textContent = formatNumberAbbr(displayVal);
   if (multEl) multEl.textContent = (Number(scaMultiplier_p)||1).toFixed(2);
 }
 function startPendingUpdater_p(){ stopPendingUpdater_p(); pendingUpdater_p = setInterval(renderPendingHud_p,1000); renderPendingHud_p(); }
@@ -187,7 +208,7 @@ async function collectAllToUser_p(uid){
     });
     lastCollection_p = new Date();
     renderPendingHud_p();
-    toast(`รับ ${pendingRounded} SCA เรียบร้อย`);
+    toast(`รับ ${formatNumberAbbr(pendingRounded)} SCA เรียบร้อย`);
   } catch (e) {
     console.error('collectAll_p fail', e);
     toast('ไม่สามารถรับคะแนนได้ ลองอีกครั้ง');
@@ -224,7 +245,7 @@ auth.onAuthStateChanged(function(user){
     if ($("displayName")) $("displayName").textContent = uname;
     if ($("username")) $("username").value = uname;
     if ($("about"))    $("about").value = data.about || "";
-    if ($("points"))   $("points").textContent = String(data.points || 0);
+    if ($("points"))   $("points").textContent = formatNumberAbbr(data.points || 0);
     if ($("quizCount"))  $("quizCount").textContent = String(data.quizCount || 0);
     if ($("quizStreak")) $("quizStreak").textContent = String(data.quizStreak || 0);
     if ($("loginStreak")) $("loginStreak").textContent = String(data.loginStreak || 0);
@@ -237,7 +258,7 @@ auth.onAuthStateChanged(function(user){
         .onSnapshot(function(s){
           if (!s.exists) return;
           var live = s.data() || {};
-          if ($("points"))   $("points").textContent = String(live.points || 0);
+          if ($("points"))   $("points").textContent = formatNumberAbbr(live.points || 0);
           if ($("loginStreak")) $("loginStreak").textContent = String(live.loginStreak || 0);
           if ($("quizCount")) $("quizCount").textContent = String(live.quizCount || 0);
           if ($("quizStreak")) $("quizStreak").textContent = String(live.quizStreak || 0);
@@ -320,4 +341,4 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", setupSidebar, { once:true });
 } else {
   setupSidebar();
-                               }
+               }
