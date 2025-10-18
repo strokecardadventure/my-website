@@ -1,11 +1,10 @@
-// ========== card.js (no reset + self-heal) — FULL, with passive SCA support ==========
+// ========== card.js (no reset + self-heal) — FULL, with passive SCA support + number abbr ==========
 
 const byId = (id) => document.getElementById(id);
 const TOTAL_CARDS = 30;
 
-/* ---------- Firebase handles are from global page: auth, db (compat) ----------
-   Assumes firebase, firebase.auth(), firebase.firestore() loaded globally.
-*/
+/* ---------- Firebase handles are from global page: auth, db (compat) ---------- */
+/* If not defined earlier, these will throw — your pages already load firebase libs. */
 
 /* ---------- Small toast fallback ---------- */
 function toast(msg){
@@ -17,6 +16,23 @@ function toast(msg){
   } else {
     try { console.log('toast:', msg); } catch(_) {}
   }
+}
+
+/* ========== Utility: Number abbreviation ========== */
+function formatNumberAbbr(n) {
+  var num = Number(n) || 0;
+  var neg = num < 0;
+  num = Math.abs(num);
+  if (num >= 1e9) {
+    return (neg ? '-' : '') + (Math.round((num / 1e9) * 10) / 10).toFixed(1).replace(/\.0$/, '') + 'b';
+  }
+  if (num >= 1e6) {
+    return (neg ? '-' : '') + (Math.round((num / 1e6) * 10) / 10).toFixed(1).replace(/\.0$/, '') + 'm';
+  }
+  if (num >= 1e3) {
+    return (neg ? '-' : '') + (Math.round((num / 1e3) * 10) / 10).toFixed(1).replace(/\.0$/, '') + 'k';
+  }
+  return (neg ? '-' : '') + String(num);
 }
 
 /* ========== SCA (passive) helpers & HUD ========== */
@@ -82,9 +98,9 @@ function computePendingSCA(lastCollectionTs, nowDate = new Date()) {
     const hud = document.createElement('div');
     hud.id = 'scaHud';
     hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
-    // default uses image coin if exists; else you can swap to emoji '🪙' in code.
+    // coin image (if available). If no image, change to '🪙'
     const coinImgHTML = '<img src="assets/coin-gold.png" style="width:18px;vertical-align:middle;margin-right:6px">';
-    hud.innerHTML = `${coinImgHTML} <span style="font-weight:800">SCA coins:</span> <span id="scaPending">0</span>
+    hud.innerHTML = `${coinImgHTML} <span style="font-weight:800">SCA:</span> <span id="scaPending">0</span>
       <button id="collectAllBtn" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
       <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay">1.00</span></div>`;
     document.body.appendChild(hud);
@@ -96,7 +112,8 @@ function renderPendingHud() {
   const multEl = byId('scaMultiplierDisplay');
   if (!el) return;
   const pending = computePendingSCA(lastCollection, new Date());
-  el.textContent = (pending >= 100 ? Math.round(pending) : pending.toFixed(1));
+  const displayVal = pending >= 100 ? Math.round(pending) : Number(pending.toFixed(1));
+  el.textContent = formatNumberAbbr(displayVal);
   if (multEl) multEl.textContent = (Number(scaMultiplier) || 1).toFixed(2);
 }
 
@@ -127,7 +144,7 @@ async function collectAllToUser(uid) {
 
     lastCollection = new Date();
     renderPendingHud();
-    toast(`รับ ${pendingRounded} SCA เรียบร้อย`);
+    toast(`รับ ${formatNumberAbbr(pendingRounded)} SCA เรียบร้อย`);
   } catch (e) {
     console.error('collectAll error', e);
     toast('ไม่สามารถรับคะแนนได้ ลองอีกครั้ง');
@@ -157,9 +174,9 @@ function setupSidebar() {
   const close = () => { sidebar.classList.remove("open"); overlay.classList.remove("active"); };
 
   if (toggleBtn) toggleBtn.addEventListener("click", open);
-  if (closeBtn)  closeBtn.addEventListener("click", close);
-  if (overlay)   overlay.addEventListener("click", close);
-  if (logout)    logout.addEventListener("click", (e)=>{ e.preventDefault(); auth.signOut().then(()=>location.href="login.html"); });
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  if (overlay) overlay.addEventListener("click", close);
+  if (logout) logout.addEventListener("click", (e)=>{ e.preventDefault(); auth.signOut().then(()=>location.href="login.html"); });
 
   document.querySelectorAll("#sidebar .menu-item a").forEach(a=>{
     if (!a.closest("#logout-link")) a.addEventListener("click", close);
@@ -343,7 +360,6 @@ auth.onAuthStateChanged(async (user) => {
     startPendingUpdater();
   });
 
-  // shared collection: borrowed cards
   docRef.collection("shared").onSnapshot((qs) => {
     borrowedSet.clear();
     qs.forEach(d => {
