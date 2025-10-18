@@ -30,10 +30,77 @@ async function loadCardRates() {
     const ref = db.collection('cardRates').doc('rates');
     const snap = await ref.get();
     if (snap.exists) cardRates = snap.data() || {};
-    else cardRates = { card1: 15, card2: 18 }; // fallback
+    else {
+      // fallback default rates (from user's list)
+      cardRates = {
+        card1: 15,
+        card2: 18,
+        card3: 17,
+        card4: 25,
+        card5: 22,
+        card6: 18,
+        card7: -6,
+        card8: -7,
+        card9: -11,
+        card10: -21,
+        card11: -5,
+        card12: -8,
+        card13: -15,
+        card14: -19,
+        card15: -15,
+        card16: -22,
+        card17: -14,
+        card18: -18,
+        card19: 26,
+        card20: 27,
+        card21: 23,
+        card22: 28,
+        card23: 26,
+        card24: 29,
+        card25: 30,
+        card26: 31,
+        card27: 32,
+        // no values provided for 28-30 in your list — default 0
+        card28: 0,
+        card29: 0,
+        card30: 0
+      };
+    }
   } catch (e) {
     console.warn('loadCardRates failed', e);
-    cardRates = { card1: 15, card2: 18 };
+    // fallback same map
+    cardRates = {
+      card1: 15,
+      card2: 18,
+      card3: 17,
+      card4: 25,
+      card5: 22,
+      card6: 18,
+      card7: -6,
+      card8: -7,
+      card9: -11,
+      card10: -21,
+      card11: -5,
+      card12: -8,
+      card13: -15,
+      card14: -19,
+      card15: -15,
+      card16: -22,
+      card17: -14,
+      card18: -18,
+      card19: 26,
+      card20: 27,
+      card21: 23,
+      card22: 28,
+      card23: 26,
+      card24: 29,
+      card25: 30,
+      card26: 31,
+      card27: 32,
+      card28: 0,
+      card29: 0,
+      card30: 0
+    };
   }
 }
 
@@ -65,8 +132,9 @@ function computePendingSCA(lastCollectionTs, nowDate = new Date()) {
     hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
     // Use coin image. Make sure assets/coin-gold.png exists.
     const coinImgHTML = '<img src="assets/coin-gold.png" style="width:18px;vertical-align:middle;margin-right:6px">';
-    hud.innerHTML = `${coinImgHTML} <span style="font-weight:800">SCA coins:</span> <span id="scaPending">0</span>
-      <button id="collectAllBtn" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
+    // Removed the "SCA coins:" text — collect button will be image-only as requested
+    hud.innerHTML = `${coinImgHTML} <span id="scaPending">0</span>
+      <button id="collectAllBtn" style="margin-left:8px;padding:6px;border-radius:50%;border:none;background:transparent;cursor:pointer">${coinImgHTML}</button>
       <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay">1.00</span></div>`;
     document.body.appendChild(hud);
   }
