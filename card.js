@@ -63,7 +63,9 @@ function computePendingSCA(lastCollectionTs, nowDate = new Date()) {
     const hud = document.createElement('div');
     hud.id = 'scaHud';
     hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
-    hud.innerHTML = `SCA: <span id="scaPending">0</span>
+    // Use coin image. Make sure assets/coin-gold.png exists.
+    const coinImgHTML = '<img src="assets/coin-gold.png" style="width:18px;vertical-align:middle;margin-right:6px">';
+    hud.innerHTML = `${coinImgHTML} <span style="font-weight:800">SCA coins:</span> <span id="scaPending">0</span>
       <button id="collectAllBtn" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
       <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay">1.00</span></div>`;
     document.body.appendChild(hud);
@@ -180,9 +182,16 @@ function renderGrid(ownedSetLocal, borrowedSet) {
         const label = borrowed && !owned
           ? `Card ${i} <small style="color:#b71c1c">(borrowed)</small>`
           : `Card ${i}`;
+
+        // get rate for this card (from cardRates)
+        const rate = (cardRates && cardRates[cid]) ? Number(cardRates[cid]) : 0;
+        // use coin image HTML (make sure assets/coin-gold.png exists)
+        const coinIcon = '<img src="assets/coin-gold.png" style="width:20px;vertical-align:middle;margin-right:8px">';
+
         showModal(
           `<img src="assets/cards/${cid}.png" alt="Card ${i}" style="max-width:220px;border-radius:12px;">
-           <div style="margin-top:1em;">${label}</div>`
+           <div style="margin-top:1em;">${label}</div>
+           <div style="margin-top:.6em;font-weight:700;color:#b71c1c;">${coinIcon} ${rate} / sec</div>`
         );
       });
     } else {
