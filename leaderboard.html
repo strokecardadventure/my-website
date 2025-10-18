@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8" />
-  <title>ตารางคะแนน</title>
+  <title>🏆 ตารางคะแนน</title>
 
   <!-- PWA -->
   <link rel="manifest" href="manifest.webmanifest">
@@ -25,30 +25,26 @@
   <link rel="stylesheet" href="share.css">
 
   <style>
-    /* Tabs look like small chips, not full-width blocks */
-    .tabs{display:flex;gap:8px;margin:8px 16px 16px;flex-wrap:wrap}
+    body{background:#fafafa;color:#222;font-family:'Prompt',sans-serif}
+    h1{text-align:center;margin:32px 0 6px;font-weight:900;color:#e53935;font-size:2.3rem}
+    .tabs{display:flex;gap:8px;margin:8px 16px 16px;flex-wrap:wrap;justify-content:center}
     .tabs .btn{
       padding:8px 12px;border:1px solid #ddd;background:#fff;border-radius:10px;cursor:pointer;
-      width:auto; display:inline-flex; align-items:center;
+      width:auto; display:inline-flex; align-items:center; font-weight:600;
     }
-    .tabs .btn.active{border-color:#b91c1c}
-
-    /* Board rows */
-    .board{margin: 0 16px 16px;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+    .tabs .btn.active{border-color:#b91c1c;color:#b91c1c}
+    .board{margin:0 16px 16px;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.06)}
     .row{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid #eee}
     .row:last-child{border-bottom:none}
     .sub{font-size:12px;color:#666}
   </style>
 </head>
 <body>
-  <!-- Sidebar (hamburger) -->
   <header class="sub-header">
-  <button class="back-btn" onclick="location.href='alldata.html'">Back</button>
+    <button class="back-btn" onclick="location.href='alldata.html'">Back</button>
   </header>
 
-  <h1 style="text-align:center;margin:32px 0 6px;font-weight:900;color:#e53935;font-size:2.3rem;">
-    🏆 ตารางคะแนน
-  </h1>
+  <h1>🏆 ตารางคะแนน</h1>
 
   <section class="panel" style="padding-bottom:6px">
     <div class="tabs">
@@ -80,6 +76,17 @@
     const auth = firebase.auth();
     const db   = firebase.firestore();
 
+    /* ===== Number Formatter ===== */
+    function formatNumberAbbr(n) {
+      var num = Number(n) || 0;
+      var neg = num < 0;
+      num = Math.abs(num);
+      if (num >= 1e9) return (neg ? '-' : '') + (Math.round((num / 1e9) * 10) / 10).toFixed(1).replace(/\.0$/, '') + 'b';
+      if (num >= 1e6) return (neg ? '-' : '') + (Math.round((num / 1e6) * 10) / 10).toFixed(1).replace(/\.0$/, '') + 'm';
+      if (num >= 1e3) return (neg ? '-' : '') + (Math.round((num / 1e3) * 10) / 10).toFixed(1).replace(/\.0$/, '') + 'k';
+      return (neg ? '-' : '') + String(num);
+    }
+
     function setupSidebar(){
       const openBtn = document.getElementById("menu-toggle");
       const sidebar = document.getElementById("sidebar");
@@ -99,14 +106,12 @@
     }
 
     const board = document.getElementById('board');
-    // เปลี่ยน tabStreak ให้เป็น field 'loginStreak'
     const tabs = { tabPoints:'points', tabQuizzes:'quizCount', tabStreak:'loginStreak' };
 
     function paintRow(i,u,byKey){
       const name = (u.username||"").toString() || (u.uid||"").slice(0,6) || "user";
-      const main = u[byKey] ?? 0;
-      // เปลี่ยน sub ให้แสดงข้อมูล pts, quizzes และ loginStreak
-      const sub  = `pts:${u.points||0} • quizzes:${u.quizCount||0} • 🔥${u.loginStreak||0}`;
+      const main = formatNumberAbbr(u[byKey] ?? 0);
+      const sub  = `💰 ${formatNumberAbbr(u.points||0)} pts • 🧩 ${formatNumberAbbr(u.quizCount||0)} • 🔥 ${formatNumberAbbr(u.loginStreak||0)}`;
       return `<div class="row"><div><b>#${i}</b> @${name}<div class="sub">${sub}</div></div><div style="font-weight:700">${main}</div></div>`;
     }
 
@@ -134,8 +139,7 @@
       };
     }
 
-    // --------- เพิ่ม: ฟังก์ชันตรวจและอัปเดต streak (เรียก global ถ้ามี, ถ้าไม่มีก็ใช้ fallback) ----------
-    // helper: สร้าง YYYY-MM-DD แบบ local
+    // === Login streak update ===
     function localYmd(d = new Date()){
       const y = d.getFullYear();
       const m = String(d.getMonth()+1).padStart(2,'0');
@@ -145,17 +149,9 @@
 
     async function ensureStreakUpdated(u){
       if (!u) return;
-      // ถ้ามี global helper ที่ login.js ลงไว้ ให้เรียก (ปลอดภัย ถ้าล้มเหลวจะ fallback)
       if (window.updateLoginStreakIfNeeded) {
-        try {
-          await window.updateLoginStreakIfNeeded(u);
-          return;
-        } catch (e) {
-          console.warn('call global updateLoginStreakIfNeeded failed:', e);
-        }
+        try { await window.updateLoginStreakIfNeeded(u); return; } catch (e) {}
       }
-
-      // Fallback inline (same logic used in login.js)
       try {
         const uref = db.collection('users').doc(u.uid);
         const now = new Date();
@@ -163,41 +159,23 @@
         const yesterday = new Date(now);
         yesterday.setDate(now.getDate() - 1);
         const ymdYester = localYmd(yesterday);
-
         const snap = await uref.get();
-        let loginStreak = 1;
-        let pointsToAdd = 0;
-
+        let loginStreak = 1, pointsToAdd = 0;
         if (snap.exists) {
           const data = snap.data() || {};
           const lastYmd = data.loginLastYmd || null;
           const prevStreak = Number(data.loginStreak || 0);
-
-          if (lastYmd === ymdToday) {
-            // already credited today
-            return;
-          } else if (lastYmd === ymdYester) {
-            loginStreak = prevStreak + 1;
-            pointsToAdd = loginStreak;
-          } else {
-            loginStreak = 1;
-            pointsToAdd = 1;
-          }
-        } else {
-          loginStreak = 1;
-          pointsToAdd = 1;
+          if (lastYmd === ymdToday) return;
+          else if (lastYmd === ymdYester) {
+            loginStreak = prevStreak + 1; pointsToAdd = loginStreak;
+          } else { loginStreak = 1; pointsToAdd = 1; }
         }
-
         const update = { loginStreak, loginLastYmd: ymdToday };
         if (pointsToAdd > 0) update.points = firebase.firestore.FieldValue.increment(pointsToAdd);
         await uref.set(update, { merge: true });
-      } catch (err) {
-        console.warn('leaderboard: fallback streak update failed', err);
-      }
+      } catch (err) { console.warn('leaderboard: fallback streak update failed', err); }
     }
-    // -----------------------------------------------------------------------------------------------
 
-    // ตอนเช็กสถานะผู้ใช้ ให้เรียก ensureStreakUpdated ก่อน load leaderboard
     auth.onAuthStateChanged(async (u)=>{
       if (!u){ location.href='login.html'; return; }
       setupSidebar();
