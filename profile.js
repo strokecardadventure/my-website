@@ -152,7 +152,8 @@ function computePendingSCA_p(lastCollectionTs, nowDate = new Date()){
     const hud = document.createElement('div');
     hud.id = 'scaHud_p';
     hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
-    hud.innerHTML = `SCA: <span id="scaPending_p">0</span>
+    const coinImgHTML_p = '<img src="assets/coin-gold.png" style="width:18px;vertical-align:middle;margin-right:6px">';
+    hud.innerHTML = `${coinImgHTML_p} <span style="font-weight:800">SCA coins:</span> <span id="scaPending_p">0</span>
       <button id="collectAllBtn_p" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
       <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay_p">1.00</span></div>`;
     document.body.appendChild(hud);
@@ -319,4 +320,4 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", setupSidebar, { once:true });
 } else {
   setupSidebar();
-                  }
+                               }
