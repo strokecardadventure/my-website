@@ -1,3 +1,5 @@
+// ====== mission.js (with SCA passive integration) ======
+
 // ====== Auth guard ======
 const auth = firebase.auth();
 const db   = firebase.firestore();
@@ -9,12 +11,126 @@ let CURRENT_USER = null; // for writing stats
 // tiny safe logger
 const log = (...a) => { try { console.log(...a); } catch(_){} };
 
+// ====== SCA passive helpers (shared for this page) ======
+let cardRates_m = null;
+let ownedSet_m = new Set();
+let scaMultiplier_m = 1.0;
+let lastCollection_m = null;
+let pendingUpdater_m = null;
+
+async function loadCardRates_m(){
+  try {
+    const ref = db.collection('cardRates').doc('rates');
+    const snap = await ref.get();
+    cardRates_m = snap.exists ? (snap.data() || {}) : { card1:15, card2:18 };
+  } catch (e) {
+    console.warn('loadCardRates_m', e);
+    cardRates_m = { card1:15, card2:18 };
+  }
+}
+function computeTotalRateForOwned_m(setOwned) {
+  if (!cardRates_m) return 0;
+  let s = 0;
+  setOwned.forEach(cid => { if (cardRates_m[cid] !== undefined) s += Number(cardRates_m[cid])||0; });
+  return s;
+}
+function computePendingSCA_m(lastCollectionTs, nowDate = new Date()){
+  if (!lastCollectionTs) return 0;
+  let lastMs;
+  try {
+    lastMs = (typeof lastCollectionTs.toDate === 'function') ? lastCollectionTs.toDate().getTime() : new Date(lastCollectionTs).getTime();
+  } catch(e){ lastMs = new Date().getTime(); }
+  const deltaSeconds = Math.max(0, (nowDate.getTime() - lastMs) / 1000);
+  const baseRate = computeTotalRateForOwned_m(ownedSet_m);
+  return deltaSeconds * baseRate * (Number(scaMultiplier_m) || 1);
+}
+
+(function injectHud_m(){
+  if (!document.getElementById('scaHud_m')) {
+    const hud = document.createElement('div');
+    hud.id = 'scaHud_m';
+    hud.style.cssText = 'position:fixed;top:16px;right:16px;z-index:1300;background:#fff;border-radius:12px;padding:8px 12px;border:2px solid #ffcdd2;color:#b71c1c;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.08);';
+    hud.innerHTML = `SCA: <span id="scaPending_m">0</span>
+      <button id="collectAllBtn_m" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:none;background:#e53935;color:#fff;font-weight:800;cursor:pointer">รับทั้งหมด</button>
+      <div style="font-size:12px;color:#888;margin-top:4px">× <span id="scaMultiplierDisplay_m">1.00</span></div>`;
+    document.body.appendChild(hud);
+  }
+})();
+
+function renderPendingHud_m(){
+  const el = document.getElementById('scaPending_m');
+  const multEl = document.getElementById('scaMultiplierDisplay_m');
+  if (!el) return;
+  const pending = computePendingSCA_m(lastCollection_m, new Date());
+  el.textContent = (pending >= 100 ? Math.round(pending) : pending.toFixed(1));
+  if (multEl) multEl.textContent = (Number(scaMultiplier_m)||1).toFixed(2);
+}
+function startPendingUpdater_m(){ stopPendingUpdater_m(); pendingUpdater_m = setInterval(renderPendingHud_m,1000); renderPendingHud_m(); }
+function stopPendingUpdater_m(){ if (pendingUpdater_m){ clearInterval(pendingUpdater_m); pendingUpdater_m = null; } }
+
+async function collectAllToUser_m(uid){
+  try {
+    const userRef = db.collection('users').doc(uid);
+    const pending = computePendingSCA_m(lastCollection_m, new Date());
+    const pendingRounded = Math.round(pending);
+    if (pendingRounded <= 0) { toast('ยังไม่มีคะแนนให้รับ'); return; }
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) throw new Error('User doc missing');
+      tx.update(userRef, {
+        points: firebase.firestore.FieldValue.increment(pendingRounded),
+        lastCollection: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    lastCollection_m = new Date();
+    renderPendingHud_m();
+    toast(`รับ ${pendingRounded} SCA เรียบร้อย`);
+  } catch (e) {
+    console.error('collectAll_m fail', e);
+    toast('ไม่สามารถรับคะแนนได้ ลองอีกครั้ง');
+  }
+}
+
+document.addEventListener('click', (ev) => {
+  if (ev.target && ev.target.id === 'collectAllBtn_m') {
+    const user = firebase.auth().currentUser;
+    if (!user) { location.href='login.html'; return; }
+    collectAllToUser_m(user.uid);
+  }
+});
+
+/* ===== existing mission.js content starts here (unchanged logic), with SCA init integrated ====== */
+
 // ====== Start ======
 auth.onAuthStateChanged(async (user) => {
   if (!user) return location.href = "login.html";
   CURRENT_USER = user;
   setupSidebar();
-  try { await buildPath(user); }
+  try {
+    // load SCA rates & start SCA listener for this user (non-blocking)
+    await loadCardRates_m();
+    const uref = db.collection('users').doc(user.uid);
+    // ensure fields
+    const s = await uref.get();
+    if (!s.exists) {
+      await uref.set({ scaMultiplier:1.0, lastCollection: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+    } else {
+      const d = s.data() || {};
+      if (typeof d.scaMultiplier !== 'number') await uref.set({ scaMultiplier:1.0 }, { merge:true });
+      if (!d.lastCollection) await uref.set({ lastCollection: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+    }
+    // listen to user doc to update SCA state (cards might not be needed here but keep)
+    uref.onSnapshot((snap)=>{
+      const data = snap.exists ? (snap.data() || {}) : {};
+      const cards = Array.isArray(data.cards) ? data.cards : [];
+      ownedSet_m.clear(); cards.forEach(c => ownedSet_m.add(c));
+      scaMultiplier_m = (typeof data.scaMultiplier === 'number') ? data.scaMultiplier : scaMultiplier_m || 1.0;
+      lastCollection_m = data.lastCollection || lastCollection_m || new Date();
+      startPendingUpdater_m();
+    }, (err)=>{ console.warn('mission: sca listen', err); startPendingUpdater_m(); });
+
+    await buildPath(user);
+  }
   catch (e) { log("buildPath error:", e); toast("มีข้อผิดพลาดเล็กน้อย กรุณารีเฟรชแล้วลองใหม่"); }
 });
 
@@ -40,117 +156,73 @@ function setupSidebar() {
 
 // ====== QUESTION BANKS (TH) ======
 const Q1_BASIC = [
-  { q:"โรคหลอดเลือดสมองมีชนิดหลักกี่ชนิด?",
-    opts:["หนึ่งชนิด:แตก,อุดตันและตื่น","สองชนิด: อุดตันและแตก ","สามชนิด","สี่ชนิด"], a:1 },
-  { q:"คำว่า “Stroke” หมายถึงอะไร?",
-    opts:["อาการบาดเจ็บของกล้ามเนื้อ","ปัญหาสมองเฉียบพลันจากหลอดเลือดอุดตันหรือแตก","แค่ปวดศีรษะ","กระดูกหัก"], a:1 },
-  { q:"ปี2567 มีผู้เสียชีวิตประมาณกี่คน",
-    opts:["20 คน","39000 คน","100คน","1คน"], a:1 },
-  { q:"stroke มีปัจจัยเสี่ยงคือ",
-    opts:["กินผัก","สูบบุหรี่","กินน้ำ","ออกกำลังกาย"], a:1 },
-  { q:"stroke ป้องกันปัจจัยเสี่ยงด้วยอะไร",
-    opts:["เล่นเกมดึกทุกวันจนถึงตีสาม","นอนเต็มอิ่มทุกๆวัน","นอนดึก","กินมันและหวาน"], a:1 },
-  { q:"สโตรกถือเป็นภาวะฉุกเฉินหรือไม่?",
-    opts:["ไม่ใช่","เฉพาะเวลาปวดมาก","ใช่ ทุกนาทีมีค่า","เฉพาะผู้สูงอายุเท่านั้น"], a:2 },
-  { q:"อาการเตือนของโรค strokeมีอะไรบ้าง",
-    opts:["BEFAST","Storke","EXPRESS","GeoGebra"], a:0 },
-  { q:"หากเกิดอาการเตือนstroke ต้องไปพบแพทย์ภายในกี่ชั่วโมง",
-    opts:["10000000นาที","4 ชั่วโมง","1–2 วัน","999 ชั่วโมง"], a:1 },
-  { q:"คนวัยรุ่นเป็นสโตรกได้ไหม?",
-    opts:["ไม่มีทาง","ได้ หากมีปัจจัยเสี่ยง","เฉพาะนักกีฬา","เฉพาะคนสูบบุหรี่"], a:1 },
-  { q:"สถานการณ์ในประเทศไทยคนที่เป็นสโตรกมีสถานการณ์เป็นอย่างไร?",
-    opts:["ลดลง","แนวโน้มเพิ่มขึ้นตามสังคมสูงวัยและพฤติกรรมเสี่ยง","ไม่มีแล้ว","ไม่ทราบ"], a:1 },
+  { q:"โรคหลอดเลือดสมองมีชนิดหลักกี่ชนิด?", opts:["หนึ่งชนิด:แตก,อุดตันและตื่น","สองชนิด: อุดตันและแตก ","สามชนิด","สี่ชนิด"], a:1 },
+  { q:"คำว่า “Stroke” หมายถึงอะไร?", opts:["อาการบาดเจ็บของกล้ามเนื้อ","ปัญหาสมองเฉียบพลันจากหลอดเลือดอุดตันหรือแตก","แค่ปวดศีรษะ","กระดูกหัก"], a:1 },
+  { q:"ปี2567 มีผู้เสียชีวิตประมาณกี่คน", opts:["20 คน","39000 คน","100คน","1คน"], a:1 },
+  { q:"stroke มีปัจจัยเสี่ยงคือ", opts:["กินผัก","สูบบุหรี่","กินน้ำ","ออกกำลังกาย"], a:1 },
+  { q:"stroke ป้องกันปัจจัยเสี่ยงด้วยอะไร", opts:["เล่นเกมดึกทุกวันจนถึงตีสาม","นอนเต็มอิ่มทุกๆวัน","นอนดึก","กินมันและหวาน"], a:1 },
+  { q:"สโตรกถือเป็นภาวะฉุกเฉินหรือไม่?", opts:["ไม่ใช่","เฉพาะเวลาปวดมาก","ใช่ ทุกนาทีมีค่า","เฉพาะผู้สูงอายุเท่านั้น"], a:2 },
+  { q:"อาการเตือนของโรค strokeมีอะไรบ้าง", opts:["BEFAST","Storke","EXPRESS","GeoGebra"], a:0 },
+  { q:"หากเกิดอาการเตือนstroke ต้องไปพบแพทย์ภายในกี่ชั่วโมง", opts:["10000000นาที","4 ชั่วโมง","1–2 วัน","999 ชั่วโมง"], a:1 },
+  { q:"คนวัยรุ่นเป็นสโตรกได้ไหม?", opts:["ไม่มีทาง","ได้ หากมีปัจจัยเสี่ยง","เฉพาะนักกีฬา","เฉพาะคนสูบบุหรี่"], a:1 },
+  { q:"สถานการณ์ในประเทศไทยคนที่เป็นสโตรกมีสถานการณ์เป็นอย่างไร?", opts:["ลดลง","แนวโน้มเพิ่มขึ้นตามสังคมสูงวัยและพฤติกรรมเสี่ยง","ไม่มีแล้ว","ไม่ทราบ"], a:1 },
 ];
 
 const Q2_CAUSES = [
-  { q:"ปัจจัยสำคัญที่สุดของสโตรกชนิดเลือดออกคือ?",
-    opts:["ความดันต่ำ","ความดันโลหิตสูง","น้ำตาลต่ำ","อากาศหนาว"], a:1 },
-  { q:"ภาวะหัวใจข้อใดเพิ่มความเสี่ยงสโตรก?",
-    opts:["หัวใจเต้นผิดจังหวะชนิด Atrial Fibrillation","หัวใจนักกีฬา","ลิ้นหัวใจปกติ","หัวใจเต้นช้า (Bradycardia)"], a:0 },
-  { q:"เหตุใดความดันโลหิตสูงจึงเพิ่มความเสี่ยง?",
-    opts:["ทำให้หลอดเลือดแข็งแรง","ทำลายผนังหลอดเลือด","ทำให้เลือดใส","ทำให้สมองเย็น"], a:1 },
-  { q:"การสูบบุหรี่มีผลอย่างไร?",
-    opts:["ปกป้องหลอดเลือด","ไม่กระทบ","ทำลายหลอดเลือดและกระตุ้นการเกิดลิ่มเลือด","รักษาสโตรกได้"], a:2 },
-  { q:"เบาหวานสัมพันธ์กับสโตรกเพราะ…",
-    opts:["ซ่อมแซมหลอดเลือด","ทำลายหลอดเลือดเล็กและเร่งการตีบแคบ","ป้องกันลิ่มเลือด","ลดคอเลสเตอรอล"], a:1 },
-  { q:"คอเลสเตอรอลสูง…",
-    opts:["ทำให้เกิดคราบไขมันอุดตันหลอดเลือด","ทำให้เลือดใส","ไม่เป็นอันตรายเสมอไป","ป้องกันการอุดตัน"], a:0 },
-  { q:"Atrial fibrillation อาจ…",
-    opts:["ทำให้เกิดลิ่มเลือดในหัวใจแล้วหลุดไปอุดสมอง","หยุดการเกิดลิ่มเลือด","ลดความดันโลหิต","รักษาเบาหวาน"], a:0 },
-  { q:"ดื่มแอลกอฮอล์มากเกินไปอาจ…",
-    opts:["ลดความดัน","เพิ่มความดันและรบกวนจังหวะหัวใจ","ป้องกันสโตรก","แค่ทำให้ง่วง"], a:1 },
-  { q:"ความเครียดเรื้อรัง…",
-    opts:["ไม่เกี่ยวข้อง","ทำให้ความดันสูงและพฤติกรรมสุขภาพแย่ลง","รักษาความกังวล","ป้องกันลิ่มเลือด"], a:1 },
-  { q:"ข้อใดคือปัจจัยเสี่ยงที่ควบคุมได้?",
-    opts:["อายุและพันธุกรรม","อาหาร การออกกำลังกาย ความดัน การสูบบุหรี่","แค่เพศ","ส่วนสูง"], a:1 },
+  { q:"ปัจจัยสำคัญที่สุดของสโตรกชนิดเลือดออกคือ?", opts:["ความดันต่ำ","ความดันโลหิตสูง","น้ำตาลต่ำ","อากาศหนาว"], a:1 },
+  { q:"ภาวะหัวใจข้อใดเพิ่มความเสี่ยงสโตรก?", opts:["หัวใจเต้นผิดจังหวะชนิด Atrial Fibrillation","หัวใจนักกีฬา","ลิ้นหัวใจปกติ","หัวใจเต้นช้า (Bradycardia)"], a:0 },
+  { q:"เหตุใดความดันโลหิตสูงจึงเพิ่มความเสี่ยง?", opts:["ทำให้หลอดเลือดแข็งแรง","ทำลายผนังหลอดเลือด","ทำให้เลือดใส","ทำให้สมองเย็น"], a:1 },
+  { q:"การสูบบุหรี่มีผลอย่างไร?", opts:["ปกป้องหลอดเลือด","ไม่กระทบ","ทำลายหลอดเลือดและกระตุ้นการเกิดลิ่มเลือด","รักษาสโตรกได้"], a:2 },
+  { q:"เบาหวานสัมพันธ์กับสโตรกเพราะ…", opts:["ซ่อมแซมหลอดเลือด","ทำลายหลอดเลือดเล็กและเร่งการตีบแคบ","ป้องกันลิ่มเลือด","ลดคอเลสเตอรอล"], a:1 },
+  { q:"คอเลสเตอรอลสูง…", opts:["ทำให้เกิดคราบไขมันอุดตันหลอดเลือด","ทำให้เลือดใส","ไม่เป็นอันตรายเสมอไป","ป้องกันการอุดตัน"], a:0 },
+  { q:"Atrial fibrillation อาจ…", opts:["ทำให้เกิดลิ่มเลือดในหัวใจแล้วหลุดไปอุดสมอง","หยุดการเกิดลิ่มเลือด","ลดความดันโลหิต","รักษาเบาหวาน"], a:0 },
+  { q:"ดื่มแอลกอฮอล์มากเกินไปอาจ…", opts:["ลดความดัน","เพิ่มความดันและรบกวนจังหวะหัวใจ","ป้องกันสโตรก","แค่ทำให้ง่วง"], a:1 },
+  { q:"ความเครียดเรื้อรัง…", opts:["ไม่เกี่ยวข้อง","ทำให้ความดันสูงและพฤติกรรมสุขภาพแย่ลง","รักษาความกังวล","ป้องกันลิ่มเลือด"], a:1 },
+  { q:"ข้อใดคือปัจจัยเสี่ยงที่ควบคุมได้?", opts:["อายุและพันธุกรรม","อาหาร การออกกำลังกาย ความดัน การสูบบุหรี่","แค่เพศ","ส่วนสูง"], a:1 },
 ];
 
 const Q3_PREVENT = [
-  { q:"อาหารแบบไหนเหมาะกับการป้องกันสโตรก?",
-    opts:["ของทอดและเค็มจัด","ผักผลไม้ ธัญพืชไม่ขัดสี ปลา ลดหวาน/เค็ม","กินแต่เนื้อ","พึ่งอาหารเสริมอย่างเดียว"], a:1 },
-  { q:"การออกกำลังกายที่แนะนำต่อสัปดาห์คือ?",
-    opts:["อย่างน้อย 150 นาที/สัปดาห์ (ระดับปานกลาง) + เวท 2 วัน","รวม 30 นาที","ไม่ต้อง หากยังเด็ก","ออกเฉพาะเสาร์–อาทิตย์"], a:0 },
-  { q:"ควบคุมความดันช่วยเพราะ…",
-    opts:["ป้องกันการทำลายหลอดเลือด","ทำให้ตัวสูงขึ้น","เปลี่ยนกรุ๊ปเลือด","ทำให้สายตาลดลง"], a:0 },
-  { q:"เลิกสูบบุหรี่ส่งผลต่อความเสี่ยงสโตรกอย่างไร?",
-    opts:["ไม่เปลี่ยน","ลดลงมากใน 1–2 ปี และใกล้เคียงคนไม่สูบใน ~5 ปี","เสี่ยงเพิ่ม","ช่วยแค่ปอด"], a:1 },
-  { q:"ตรวจสุขภาพสม่ำเสมอช่วยโดย…",
-    opts:["ได้ของกินเล่นฟรี","คัดกรองและรักษาปัจจัยเสี่ยงตั้งแต่เนิ่น ๆ","ทำให้ง่วง","เพิ่มความดัน"], a:1 },
-  { q:"น้ำหนักเกิน/อ้วน…",
-    opts:["ลดความเสี่ยง","ไม่กระทบ","เพิ่มความเสี่ยงผ่านความดัน เบาหวาน ไขมันสูง","เป็นเรื่องความสวยงามเท่านั้น"], a:2 },
-  { q:"ควบคุมน้ำตาลในเลือดเพื่อ…",
-    opts:["ทำลายหลอดเลือด","ป้องกันการทำลายหลอดเลือด","เพิ่มน้ำหนัก","เปลี่ยนสีตา"], a:1 },
-  { q:"การนอนน้อยเกินไป…",
-    opts:["อาจทำให้ความดันและความเครียดสูงขึ้น","ปลอดภัยเสมอ","รักษาความเครียด","ป้องกันลิ่มเลือด"], a:0 },
-  { q:"การจัดการความเครียดช่วยโดย…",
-    opts:["ทำให้ความดันปกติและพฤติกรรมสุขภาพดีขึ้น","ทำลายการนอน","เพิ่มคอเลสเตอรอล","ทำให้เกิดลิ่มเลือด"], a:0 },
-  { q:"การดื่มน้ำเพียงพอ…",
-    opts:["ทำให้การไหลเวียนแย่ลง","ช่วยสุขภาพและการไหลเวียนโดยรวม","ทำให้เกิดสโตรก","ทดแทนการออกกำลังกายได้"], a:1 },
+  { q:"อาหารแบบไหนเหมาะกับการป้องกันสโตรก?", opts:["ของทอดและเค็มจัด","ผักผลไม้ ธัญพืชไม่ขัดสี ปลา ลดหวาน/เค็ม","กินแต่เนื้อ","พึ่งอาหารเสริมอย่างเดียว"], a:1 },
+  { q:"การออกกำลังกายที่แนะนำต่อสัปดาห์คือ?", opts:["อย่างน้อย 150 นาที/สัปดาห์ (ระดับปานกลาง) + เวท 2 วัน","รวม 30 นาที","ไม่ต้อง หากยังเด็ก","ออกเฉพาะเสาร์–อาทิตย์"], a:0 },
+  { q:"ควบคุมความดันช่วยเพราะ…", opts:["ป้องกันการทำลายหลอดเลือด","ทำให้ตัวสูงขึ้น","เปลี่ยนกรุ๊ปเลือด","ทำให้สายตาลดลง"], a:0 },
+  { q:"เลิกสูบบุหรี่ส่งผลต่อความเสี่ยงสโตรกอย่างไร?", opts:["ไม่เปลี่ยน","ลดลงมากใน 1–2 ปี และใกล้เคียงคนไม่สูบใน ~5 ปี","เสี่ยงเพิ่ม","ช่วยแค่ปอด"], a:1 },
+  { q:"ตรวจสุขภาพสม่ำเสมอช่วยโดย…", opts:["ได้ของกินเล่นฟรี","คัดกรองและรักษาปัจจัยเสี่ยงตั้งแต่เนิ่น ๆ","ทำให้ง่วง","เพิ่มความดัน"], a:1 },
+  { q:"น้ำหนักเกิน/อ้วน…", opts:["ลดความเสี่ยง","ไม่กระทบ","เพิ่มความเสี่ยงผ่านความดัน เบาหวาน ไขมันสูง","เป็นเรื่องความสวยงามเท่านั้น"], a:2 },
+  { q:"ควบคุมน้ำตาลในเลือดเพื่อ…", opts:["ทำลายหลอดเลือด","ป้องกันการทำลายหลอดเลือด","เพิ่มน้ำหนัก","เปลี่ยนสีตา"], a:1 },
+  { q:"การนอนน้อยเกินไป…", opts:["อาจทำให้ความดันและความเครียดสูงขึ้น","ปลอดภัยเสมอ","รักษาความเครียด","ป้องกันลิ่มเลือด"], a:0 },
+  { q:"การจัดการความเครียดช่วยโดย…", opts:["ทำให้ความดันปกติและพฤติกรรมสุขภาพดีขึ้น","ทำลายการนอน","เพิ่มคอเลสเตอรอล","ทำให้เกิดลิ่มเลือด"], a:0 },
+  { q:"การดื่มน้ำเพียงพอ…", opts:["ทำให้การไหลเวียนแย่ลง","ช่วยสุขภาพและการไหลเวียนโดยรวม","ทำให้เกิดสโตรก","ทดแทนการออกกำลังกายได้"], a:1 },
 ];
 
 const Q4_BEFAST = [
-  { q:"BEFAST ย่อมาจากอะไร?",
-    opts:[
-      "Brain, Eye, Feet, Arms, Speech, Talk",
-      "Balance, Eyes, Face, Arms, Speech, Time",
-      "Breathe, Eat, Fast, Act, Sit, Talk",
-      "Blink, Ear, Face, Abdomen, Sleep, Time"
-    ], a:1 },
+  { q:"BEFAST ย่อมาจากอะไร?", opts:[
+    "Brain, Eye, Feet, Arms, Speech, Talk",
+    "Balance, Eyes, Face, Arms, Speech, Time",
+    "Breathe, Eat, Fast, Act, Sit, Talk",
+    "Blink, Ear, Face, Abdomen, Sleep, Time"
+  ], a:1 },
   { q:"B = ?", opts:["Breath","ปัญหาการทรงตัว (Balance)","Bones","Belief"], a:1 },
   { q:"E = ?", opts:["ปวดหู","ตา: มองเห็นผิดปกติ/ตามัวเฉียบพลัน","พลังงานต่ำ","ศอกอ่อนแรง"], a:1 },
   { q:"F = ?", opts:["ไข้","หน้าเบี้ยว","ปวดเท้า","แพ้อาหาร"], a:1 },
   { q:"A = ?", opts:["แขนขาอ่อนแรง","ข้อเท้าเคล็ด","หืด","โลหิตจาง"], a:0 },
   { q:"S = ?", opts:["ง่วงนอน","พูดไม่ชัด/สื่อสารลำบาก","เหงื่อออก","ผิวไหม้แดด"], a:1 },
   { q:"T = ?", opts:["พรุ่งนี้ค่อยไป","ถึงเวลาโทรฉุกเฉิน","พักดื่มชา","งีบ"], a:1 },
-  { q:"หากพบสัญญาณ BEFAST ควร…",
-    opts:["รอดูที่บ้าน","โทร 1669 ทันที","ดื่มน้ำ","หาดูใน YouTube"], a:1 },
-  { q:"เหตุใดเวลาเป็นสิ่งสำคัญ?",
-    opts:["สมองทนได้ตลอดไป","รักษาได้เร็ว สมองเสียหายน้อยลง","รถพยาบาลชอบความเร็ว","ไม่สำคัญ"], a:1 },
-  { q:"ทำไมไม่ควรรอให้อาการหายเอง?",
-    opts:["รอปลอดภัยกว่า","ยิ่งช้า ยิ่งเสี่ยงเสียถาวร","โรงพยาบาลปิด","ดื่มน้ำก็หาย"], a:1 },
+  { q:"หากพบสัญญาณ BEFAST ควร…", opts:["รอดูที่บ้าน","โทร 1669 ทันที","ดื่มน้ำ","หาดูใน YouTube"], a:1 },
+  { q:"เหตุใดเวลาเป็นสิ่งสำคัญ?", opts:["สมองทนได้ตลอดไป","รักษาได้เร็ว สมองเสียหายน้อยลง","รถพยาบาลชอบความเร็ว","ไม่สำคัญ"], a:1 },
+  { q:"ทำไมไม่ควรรอให้อาการหายเอง?", opts:["รอปลอดภัยกว่า","ยิ่งช้า ยิ่งเสี่ยงเสียถาวร","โรงพยาบาลปิด","ดื่มน้ำก็หาย"], a:1 },
 ];
 
 const Q5_TREAT = [
-  { q:"เมื่อสงสัยว่าใครเป็นสโตรก ควรทำสิ่งแรกคือ?",
-    opts:["ให้กินอาหาร","โทรขอความช่วยเหลือและรีบนำส่งโรงพยาบาล","ปล่อยให้นอนพัก","นวด"], a:1 },
-  { q:"ทำไมต้องไปโรงพยาบาลให้เร็ว?",
-    opts:["เพิ่มโอกาสรักษาได้ผลและฟื้นตัวดี","ไปจ่ายเงินเร็วขึ้น","เลี่ยงเอกสาร","ไม่มีเหตุผล"], a:0 },
-  { q:"เครื่องมือใดใช้ตรวจแยกชนิดสโตรก?",
-    opts:["อัลตราซาวด์","CT/MRI","เอกซเรย์ขา","วัดอุณหภูมิ"], a:1 },
-  { q:"ถ้าเส้นเลือดอุดตัน แพทย์อาจ…",
-    opts:["ให้ยาละลายลิ่มเลือด","ให้ยานอนหลับ","ไม่ทำอะไร","ประคบเย็นอย่างเดียว"], a:0 },
-  { q:"ถ้าเส้นเลือดแตก แพทย์จะ…",
-    opts:["ปล่อยให้เลือดออก","หยุดเลือด (บางกรณีผ่าตัด)","ให้ขนม","ให้กลับบ้าน"], a:1 },
-  { q:"ทำไมต้องกายภาพบำบัดหลังสโตรก?",
-    opts:["เพื่อฟื้นกำลังและการเคลื่อนไหว","เพื่อฝึกทำอาหาร","ไม่มีเหตุผล","เพื่อเลี่ยงการพบเพื่อน"], a:0 },
-  { q:"ใครช่วยดูแลปัญหาการพูด?",
-    opts:["ทันตแพทย์","นักแก้ไขการพูด","เชฟ","นักบิน"], a:1 },
-  { q:"อาหารที่ดีช่วงฟื้นตัว…",
-    opts:["ทำให้หายช้า","ให้สารอาหารช่วยซ่อมแซมร่างกาย","อุดตันท่อน้ำเหลือง","ไม่มีประโยชน์"], a:1 },
-  { q:"กำลังใจจากครอบครัว…",
-    opts:["ไม่สำคัญ","ช่วยสร้างแรงจูงใจในการฟื้นตัว","เป็นโทษต่อการรักษา","ทดแทนยาได้"], a:1 },
-  { q:"เพื่อป้องกันสโตรกซ้ำ ควร…",
-    opts:["เมินความดันโลหิต","กินดี ออกกำลัง คุมความดัน พบแพทย์ตามนัด","พักผ่อนอย่างเดียวตลอดไป","งดดื่มน้ำ"], a:1 },
+  { q:"เมื่อสงสัยว่าใครเป็นสโตรก ควรทำสิ่งแรกคือ?", opts:["ให้กินอาหาร","โทรขอความช่วยเหลือและรีบนำส่งโรงพยาบาล","ปล่อยให้นอนพัก","นวด"], a:1 },
+  { q:"ทำไมต้องไปโรงพยาบาลให้เร็ว?", opts:["เพิ่มโอกาสรักษาได้ผลและฟื้นตัวดี","ไปจ่ายเงินเร็วขึ้น","เลี่ยงเอกสาร","ไม่มีเหตุผล"], a:0 },
+  { q:"เครื่องมือใดใช้ตรวจแยกชนิดสโตรก?", opts:["อัลตราซาวด์","CT/MRI","เอกซเรย์ขา","วัดอุณหภูมิ"], a:1 },
+  { q:"ถ้าเส้นเลือดอุดตัน แพทย์อาจ…", opts:["ให้ยาละลายลิ่มเลือด","ให้ยานอนหลับ","ไม่ทำอะไร","ประคบเย็นอย่างเดียว"], a:0 },
+  { q:"ถ้าเส้นเลือดแตก แพทย์จะ…", opts:["ปล่อยให้เลือดออก","หยุดเลือด (บางกรณีผ่าตัด)","ให้ขนม","ให้กลับบ้าน"], a:1 },
+  { q:"ทำไมต้องกายภาพบำบัดหลังสโตรก?", opts:["เพื่อฟื้นกำลังและการเคลื่อนไหว","เพื่อฝึกทำอาหาร","ไม่มีเหตุผล","เพื่อเลี่ยงการพบเพื่อน"], a:0 },
+  { q:"ใครช่วยดูแลปัญหาการพูด?", opts:["ทันตแพทย์","นักแก้ไขการพูด","เชฟ","นักบิน"], a:1 },
+  { q:"อาหารที่ดีช่วงฟื้นตัว…", opts:["ทำให้หายช้า","ให้สารอาหารช่วยซ่อมแซมร่างกาย","อุดตันท่อน้ำเหลือง","ไม่มีประโยชน์"], a:1 },
+  { q:"กำลังใจจากครอบครัว…", opts:["ไม่สำคัญ","ช่วยสร้างแรงจูงใจในการฟื้นตัว","เป็นโทษต่อการรักษา","ทดแทนยาได้"], a:1 },
+  { q:"เพื่อป้องกันสโตรกซ้ำ ควร…", opts:["เมินความดันโลหิต","กินดี ออกกำลัง คุมความดัน พบแพทย์ตามนัด","พักผ่อนอย่างเดียวตลอดไป","งดดื่มน้ำ"], a:1 },
 ];
 
 // --- attach stable IDs to each question for stats ---
@@ -246,11 +318,11 @@ async function buildPath(user){
   const activeIdx = completed.findIndex(v=>!v);
   path.innerHTML = "";
   if (activeIdx === -1) {
-    allDoneEl?.classList.remove("hidden");
+    document.getElementById("allDone")?.classList.remove("hidden");
     for (let i=0;i<LEVEL_COUNT;i++) path.appendChild(nodeElement(i,"done"));
     return;
   }
-  allDoneEl?.classList.add("hidden");
+  document.getElementById("allDone")?.classList.add("hidden");
 
   for (let i=0;i<LEVEL_COUNT;i++){
     const state = completed[i] ? "done" : (i===activeIdx ? "active" : "locked");
@@ -263,6 +335,11 @@ async function buildPath(user){
 }
 
 // ====== Quiz flow ======
+let CURRENT_USER_LOCAL = null;
+auth.onAuthStateChanged(function(u){
+  CURRENT_USER_LOCAL = u;
+});
+
 function startQuiz(levelIdx, docRef, completed){
   const modal = document.getElementById("quizModal");
   const box   = document.getElementById("quizBox");
@@ -315,7 +392,7 @@ function startQuiz(levelIdx, docRef, completed){
           db.collection('questionStats').doc(q.id)
             .collection('answers')
             .add({
-              uid: CURRENT_USER.uid,
+              uid: CURRENT_USER_LOCAL ? CURRENT_USER_LOCAL.uid : 'anon',
               correct: (answers[i] === q.a),
               level: levelIdx+1,
               createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -406,4 +483,4 @@ function toast(msg){
   modal.classList.add("show");
   document.getElementById("closeNoticeX").onclick = ()=>modal.classList.remove("show");
   document.getElementById("closeNotice").onclick  = ()=>modal.classList.remove("show");
-   }
+    }
