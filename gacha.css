@@ -1,6 +1,11 @@
-/* gacha.css — optional overrides; in most cases you can rely on profile.css */
-.gacha-card { font-family: 'Noto Sans Thai','Noto Sans',sans-serif; }
-.btn-gacha { background: linear-gradient(90deg,#6b4bff,#e539ff); box-shadow: 0 6px 20px rgba(107,75,255,.18); color: #fff; }
-.modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); z-index:1400; }
-.modal.hidden{ display:none; }
-.modal-card{ background:#fff; padding:18px; border-radius:12px; min-width:260px; text-align:center; }
+/* gacha.css - small overrides to match site */
+.gacha-wrap{max-width:900px;margin:18px auto;padding:0 16px}
+.gacha-panel{padding:18px;border-radius:16px}
+.card-row{display:flex;gap:14px;justify-content:center;margin:18px 0}
+.gacha-card{width:110px;height:160px;border-radius:12px;background:linear-gradient(180deg,#fbfbfb,#f2f2f2);display:flex;align-items:center;justify-content:center;color:#777;font-size:48px;box-shadow:0 8px 18px rgba(0,0,0,.06);border:1px solid #f0f0f0}
+.gacha-cta{display:flex;flex-direction:column;align-items:center;gap:10px}
+.btn-gacha{background:linear-gradient(90deg,#b24cff,#e539ff); color:#fff; border:0; padding:12px 22px; border-radius:999px; font-weight:800; cursor:pointer; box-shadow:0 8px 24px rgba(181,76,255,.12)}
+.modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:1400}
+.modal.hidden{display:none}
+.modal-card{background:#fff;padding:18px;border-radius:12px;min-width:260px;text-align:center}
+@media (max-width:480px){ .gacha-card{width:84px;height:120px;font-size:40px} .wrap{padding:8px} }
