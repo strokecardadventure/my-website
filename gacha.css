@@ -4,7 +4,8 @@
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;font-family:Inter, system-ui, Arial, sans-serif;background:linear-gradient(180deg,#0b0b0d 0%, #111217 100%);color:#e9e9ee}
 .wrap{max-width:480px;margin:28px auto;padding:18px}
-.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px}
+.left-controls{display:flex;align-items:center;gap:8px}
 .topbar h1{font-size:18px;margin:0}
 .wallet{font-weight:700}
 .gacha-area{background:rgba(255,255,255,0.02);padding:16px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,0.6)}
