@@ -1,0 +1,45 @@
+<!-- FILE: gacha.html -->
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stroke Card Adventure — Gacha</title>
+  <link rel="stylesheet" href="gacha.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="topbar">
+      <h1>Stroke Card Adventure</h1>
+      <div class="wallet">SCA Coins: <span id="coins">0</span></div>
+    </header>
+
+    <section class="gacha-area">
+      <div class="progress">การ์ดที่ยังขาด: <span id="missing">0</span> / <span id="total">0</span></div>
+
+      <div class="card-row" id="cardRow">
+        <div class="card back" data-slot="0"><div class="q">?</div></div>
+        <div class="card back" data-slot="1"><div class="q">?</div></div>
+        <div class="card back" data-slot="2"><div class="q">?</div></div>
+      </div>
+
+      <div class="controls">
+        <button id="gachaBtn" class="btn">สุ่มการ์ด</button>
+        <div class="hint" id="costHint"></div>
+      </div>
+
+      <div class="footnote">(โหมด: Guaranteed‑new — สุ่มเฉพาะการ์ดที่ยังไม่มี)</div>
+    </section>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <h3 id="modalTitle">คุณได้การ์ดใหม่!</h3>
+        <div id="modalBody"></div>
+        <button id="modalClose" class="btn small">ปิด</button>
+      </div>
+    </div>
+
+  </main>
+  <script src="gacha.js"></script>
+</body>
+</html>
