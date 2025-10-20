@@ -1,4 +1,6 @@
 // gacha.js — รุ่นปรับให้แสดง '?' ตลอดเวลา (ไม่แสดงชื่อการ์ด)
+// + ป้องกัน overlay/element เก่าที่แสดงประวัติการ์ด
+
 (function(){
   // CONFIG
   const TOTAL_CARDS = 30;
@@ -79,6 +81,32 @@
     return out;
   }
 
+  // Remove any leftover overlay or element that other code may have injected
+  function removeHistoryOverlay(){
+    // common id/class that earlier versions or test code might have used
+    const ids = ['gachaHistory','historyOverlay','gacha-big-history'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    });
+    // remove elements with class patterns
+    const clsList = ['gacha-history','big-history','card-history-overlay'];
+    clsList.forEach(c => {
+      document.querySelectorAll('.' + c).forEach(e => {
+        if (e && e.parentNode) e.parentNode.removeChild(e);
+      });
+    });
+    // also hide any leftover large text nodes inside cardRow (best-effort)
+    if (cardRow){
+      // remove any direct large-text node children (strings)
+      Array.from(cardRow.childNodes).forEach(node => {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0){
+          node.textContent = '';
+        }
+      });
+    }
+  }
+
   // compute missing (for count only)
   function computeMissingCount(){
     return Math.max(TOTAL_CARDS - ownedNormalized.length, 0);
@@ -86,6 +114,9 @@
 
   // render — placeholders always show '?'
   function render(){
+    // ensure no overlay from previous code remains
+    removeHistoryOverlay();
+
     if (coinsEl) coinsEl.textContent = fmt(currentPoints);
     if (totalEl) totalEl.textContent = TOTAL_CARDS;
     if (missingEl) missingEl.textContent = computeMissingCount();
@@ -99,7 +130,10 @@
     if (cardRow){
       const placeholders = cardRow.querySelectorAll('.gacha-card');
       placeholders.forEach(el => {
-        el.textContent = '?'; // ALWAYS show '?'
+        // ALWAYS show '?' and ensure style is normal (prevent huge font override)
+        el.textContent = '?';
+        el.style.fontSize = ''; // let CSS control it
+        el.style.whiteSpace = 'normal';
       });
     }
   }
@@ -186,6 +220,9 @@
 
   // auth + realtime sync
   auth.onAuthStateChanged(user => {
+    // remove any old overlay immediately when the page loads or user logs out/in
+    removeHistoryOverlay();
+
     if (!user) { userUid = null; currentPoints = 0; ownedNormalized = []; gachaStreak = 0; render(); return; }
     userUid = user.uid;
     const ref = db.collection('users').doc(userUid);
@@ -215,8 +252,12 @@
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(localState)); } catch(e){}
       }
 
+      // IMPORTANT: remove any overlay before render
+      removeHistoryOverlay();
+
       render();
-      console.log('gacha snapshot:', { points: currentPoints, rawCardsLength: rawCards.length, ownedNormalizedLength: ownedNormalized.length });
+      // don't log full arrays to avoid accidental DOM injection from debug code
+      console.log('gacha snapshot: points updated, owned count =', ownedNormalized.length);
     }, err => {
       console.error('snapshot error', err);
       render();
@@ -224,6 +265,7 @@
   });
 
   // initial render
+  removeHistoryOverlay();
   render();
 
 })();
