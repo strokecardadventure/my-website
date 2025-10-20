@@ -1,4 +1,3 @@
-/* gacha.css - small overrides to match site */
 .gacha-wrap{max-width:900px;margin:18px auto;padding:0 16px}
 .gacha-panel{padding:18px;border-radius:16px}
 .card-row{display:flex;gap:14px;justify-content:center;margin:18px 0}
