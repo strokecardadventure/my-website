@@ -1,150 +1,121 @@
-// gacha.js — Safe Gacha: backup -> transaction (arrayUnion) -> normalize card ids
+// gacha.js — เวอร์ชันแก้ไข: ไม่ลบข้อมูล, normalize สำหรับ logic, เพิ่มการ์ดเป็น "cardNN", backup ก่อน update
 (function(){
-  // Config
-  const GACHA_TOTAL = 60;
-  const BASE_COST = 10000;
-  const COST_MULTIPLIER = 2;
-  const MAX_COST = 1500000;
-  const BACKUP_SUBCOL = '_backups'; // under users/{uid}/_backups/{ts}
+  // CONFIG
+  const TOTAL_CARDS = 60;
+  const PROGRESSION = [10000,20000,40000,80000,160000,320000,640000,1280000];
+  const CAP = 1500000;
+  const STORAGE_KEY = 'sca_gacha_local_v2';
+  const BACKUP_SUBCOL = '_backups';
+  const BACK_FALLBACK = 'alldata.html'; // ปรับเป็นหน้าที่ต้องการ
 
-  // DOM refs
+  // DOM
   const $ = id => document.getElementById(id);
-  const scaEl = $('scaCoins');
-  const missingEl = $('missingCount');
-  const totalEl = $('totalCards');
-  const streakEl = $('streak');
+  const coinsEl = $('coins');
+  const missingEl = $('missing');
+  const totalEl = $('total');
   const gachaBtn = $('gachaBtn');
   const costHint = $('costHint');
   const modal = $('modal');
   const modalBody = $('modalBody');
   const modalClose = $('modalClose');
   const cardRow = $('cardRow');
+  const streakEl = $('streak');
   const backBtn = $('backBtn');
 
-  // Firebase
+  // local
+  let localState = { streak: 0 };
+  try { const raw = localStorage.getItem(STORAGE_KEY); if(raw) localState = JSON.parse(raw); } catch(e){}
+
+  // firebase
   const auth = firebase.auth();
   const db = firebase.firestore();
 
-  // Local state
-  let currentUser = null;
+  // runtime
+  let userUid = null;
+  let rawCards = [];      // raw values as in DB (keeps original values)
+  let ownedNormalized = []; // canonical 'cardNN' for logic
   let currentPoints = 0;
-  let ownedCards = []; // normalized "cardNN"
   let gachaStreak = 0;
 
-  // Helpers
-  function fmtNumber(n){
-    if (typeof n !== 'number') return String(n);
-    if (n >= 1000000) return Math.round(n/100000)/10 + 'm';
-    if (n >= 1000) return Math.round(n/100)/10 + 'k';
-    return String(n);
+  // helpers
+  function fmt(n){ return (typeof n === 'number') ? n.toLocaleString() : String(n || 0); }
+  function clampCost(streakIndex){
+    if (streakIndex <= 0) return PROGRESSION[0];
+    if (streakIndex <= PROGRESSION.length) return PROGRESSION[streakIndex-1];
+    return CAP;
   }
 
-  function normalizeCardID(v){
+  function normalizeSingle(v){
     if (v === null || v === undefined) return null;
     const s = String(v).trim();
-    // already like "cardNN" (case-insensitive)
-    const mCard = s.match(/^card\s*0*([0-9]+)$/i);
-    if (mCard) return 'card' + Number(mCard[1]);
-    // pure number like "41"
-    const mNum = s.match(/^(\d+)$/);
-    if (mNum) return 'card' + Number(mNum[1]);
-    // contains digits
-    const m = s.match(/(\d+)/);
+    // already cardNN (card + number)
+    let m = s.match(/^card\s*0*([0-9]+)$/i);
     if (m) return 'card' + Number(m[1]);
-    // fallback: return original string (but we prefer cardNN)
+    // pure number
+    m = s.match(/^0*([0-9]+)$/);
+    if (m) return 'card' + Number(m[1]);
+    // contains number
+    m = s.match(/([0-9]+)/);
+    if (m) return 'card' + Number(m[1]);
+    // fallback
     return s;
   }
 
-  function getNextCost(streak){
-    let cost = BASE_COST * Math.pow(COST_MULTIPLIER, streak);
-    if (cost > MAX_COST) return MAX_COST;
-    return Math.round(cost);
+  function normalizeCardsField(raw){
+    // returns array of canonical 'cardNN' strings (no duplicates)
+    if (!raw) return [];
+    let arr = [];
+    if (Array.isArray(raw)){
+      arr = raw.map(normalizeSingle).filter(Boolean);
+    } else if (typeof raw === 'object'){
+      try {
+        arr = Object.values(raw).map(normalizeSingle).filter(Boolean);
+      } catch(e){ arr = []; }
+    } else {
+      arr = [normalizeSingle(raw)].filter(Boolean);
+    }
+    // unique
+    return Array.from(new Set(arr));
   }
 
-  function allCardIDs(){
-    // use 1..GACHA_TOTAL as cards (card1 .. cardN)
-    return Array.from({length:GACHA_TOTAL}, (_,i) => 'card' + (i+1));
+  function computeMissing(){
+    // all card ids: card1..cardN
+    const all = Array.from({length: TOTAL_CARDS}, (_,i) => 'card' + (i+1));
+    const ownedSet = new Set(ownedNormalized);
+    return all.filter(c => !ownedSet.has(c));
   }
 
   function render(){
-    if (scaEl) scaEl.textContent = fmtNumber(currentPoints);
-    if (missingEl) missingEl.textContent = Math.max(0, GACHA_TOTAL - ownedCards.length);
-    if (totalEl) totalEl.textContent = GACHA_TOTAL;
-    if (streakEl) streakEl.textContent = String(gachaStreak || 0);
-    const nextCost = getNextCost(gachaStreak || 0);
-    if (costHint) costHint.textContent = `ราคาสุ่มครั้งที่ ${ (gachaStreak||0) + 1 }: ${fmtNumber(nextCost)} SCA`;
-    if (gachaBtn) gachaBtn.textContent = `สุ่มการ์ด — ${fmtNumber(nextCost)} SCA`;
+    if (coinsEl) coinsEl.textContent = fmt(currentPoints);
+    if (totalEl) totalEl.textContent = TOTAL_CARDS;
+    if (missingEl) missingEl.textContent = computeMissing().length;
+    if (streakEl) streakEl.textContent = String(gachaStreak || localState.streak || 0);
 
-    // show last owned (up to 3)
+    const nextIdx = (localState.streak || 0) + 1;
+    const nextCost = clampCost(nextIdx);
+    if (gachaBtn) gachaBtn.textContent = `สุ่มการ์ด — ${fmt(nextCost)} SCA`;
+    if (costHint) costHint.textContent = `ราคาสุ่มครั้งที่ ${nextIdx}: ${fmt(nextCost)} SCA`;
+
+    // show last 3 ownedNormalized
     if (cardRow){
-      const last = ownedCards.slice(-3).reverse();
+      const last = ownedNormalized.slice(-3).reverse();
       const placeholders = cardRow.querySelectorAll('.gacha-card');
-      placeholders.forEach((el, idx)=>{
+      placeholders.forEach((el, idx) => {
         if (last[idx]) el.textContent = last[idx];
         else el.textContent = '?';
       });
     }
   }
 
-  // Listen user doc
-  auth.onAuthStateChanged(user => {
-    if (!user) { currentUser = null; return; }
-    currentUser = user;
-    const ref = db.collection('users').doc(user.uid);
-    ref.onSnapshot(snap => {
-      if (!snap.exists){
-        currentPoints = 0; ownedCards = []; gachaStreak = 0; render(); return;
-      }
-      const d = snap.data() || {};
-      currentPoints = Number(d.points || d.sca || d.balance || 0);
-      gachaStreak = Number(d.gachaStreak || 0) || 0;
-
-      // Normalize cards: support array, object, or numeric fields expanded
-      let collected = [];
-      if (Array.isArray(d.cards)) {
-        collected = d.cards.map(normalizeCardID).filter(Boolean);
-      } else if (d.cards && typeof d.cards === 'object') {
-        // object/map -> values
-        collected = Object.values(d.cards).map(normalizeCardID).filter(Boolean);
-      } else {
-        // fallback: inspect top-level fields that look like card entries
-        Object.keys(d).forEach(k => {
-          if (/^\d+$/.test(k) || /^card\d+$/i.test(k)) {
-            const v = d[k];
-            const nid = normalizeCardID(v !== undefined ? v : k);
-            if (nid) collected.push(nid);
-          }
-        });
-      }
-
-      // remove duplicates and sort by numeric suffix
-      const unique = Array.from(new Set(collected));
-      unique.sort((a,b)=>{
-        const ma = a.match(/(\d+)$/); const mb = b.match(/(\d+)$/);
-        const na = ma ? Number(ma[1]) : 1e9;
-        const nb = mb ? Number(mb[1]) : 1e9;
-        return na - nb;
-      });
-
-      ownedCards = unique;
-      render();
-    }, err => {
-      console.error('gacha: snapshot error', err);
-      render();
-    });
-  });
-
-  // Backup helper
+  // backup doc (best effort)
   async function backupUserDoc(uid){
     try {
       const ref = db.collection('users').doc(uid);
       const snap = await ref.get();
       const data = snap.exists ? snap.data() : {};
       const backupRef = ref.collection(BACKUP_SUBCOL).doc(String(Date.now()));
-      await backupRef.set({
-        snapshot: data,
-        ts: firebase.firestore.FieldValue.serverTimestamp()
-      });
+      await backupRef.set({ snapshot: data, ts: firebase.firestore.FieldValue.serverTimestamp() });
+      console.log('backup saved to', backupRef.path);
       return backupRef.path;
     } catch (e) {
       console.warn('backup failed', e);
@@ -152,74 +123,127 @@
     }
   }
 
-  // Main gacha action (safe)
+  // pick random from array
+  function pickRandom(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+
+  // MAIN gacha
   async function doGacha(){
-    if (!currentUser) { alert('กรุณาเข้าสู่ระบบ'); return; }
-    const uid = currentUser.uid;
-    const userRef = db.collection('users').doc(uid);
+    if (!userUid) { alert('กรุณาเข้าสู่ระบบ'); return; }
 
-    const nextCost = getNextCost(gachaStreak || 0);
+    const missing = computeMissing();
+    if (!missing.length){ alert('คุณมีครบทุกการ์ดแล้ว'); return; }
 
-    // quick local check
-    if (currentPoints < nextCost){
-      alert(`คะแนนไม่พอ (ต้องการ ${fmtNumber(nextCost)} SCA)`); return;
-    }
+    const nextIdx = (localState.streak || 0) + 1;
+    const cost = clampCost(nextIdx);
 
-    const all = allCardIDs();
-    const missing = all.filter(c => !ownedCards.includes(c));
-    if (missing.length === 0){
-      alert('คุณมีครบทุกการ์ดแล้ว!');
-      return;
-    }
+    if (currentPoints < cost){ alert(`เหรียญไม่พอ (ต้องการ ${fmt(cost)} SCA)`); return; }
 
-    // pick random missing
-    const pick = missing[Math.floor(Math.random() * missing.length)];
+    const pick = pickRandom(missing); // pick canonical 'cardNN'
 
-    // backup before update (best effort)
-    try {
-      await backupUserDoc(uid);
-    } catch(e){
-      console.warn('backup threw', e);
-    }
+    // backup before update
+    await backupUserDoc(userUid).catch(()=>{ /* ignore backup failure */ });
 
-    // transaction: re-check points and update atomically inserting card via arrayUnion
+    // Transaction: re-verify points and arrayUnion pick
+    const userRef = db.collection('users').doc(userUid);
     try {
       await db.runTransaction(async tx => {
         const snap = await tx.get(userRef);
         if (!snap.exists) throw new Error('User doc missing');
         const data = snap.data() || {};
         const curPoints = Number(data.points || data.sca || data.balance || 0);
-        if (curPoints < nextCost) throw new Error('คะแนนไม่พอ (ขณะทำรายการ)');
-        // Use arrayUnion to append if not present
+        if (curPoints < cost) throw new Error('คะแนนไม่พอ (ขณะทำรายการ)');
+
+        // IMPORTANT: add as "cardNN" via arrayUnion (will not remove old numeric entries)
         tx.update(userRef, {
-          points: firebase.firestore.FieldValue.increment(-nextCost),
+          points: firebase.firestore.FieldValue.increment(-cost),
           cards: firebase.firestore.FieldValue.arrayUnion(pick),
           gachaStreak: firebase.firestore.FieldValue.increment(1)
         });
       });
 
-      // success: show modal (UI will update via snapshot listener)
-      if (modalBody) modalBody.innerHTML = `<div style="font-weight:700">คุณได้การ์ดใหม่: ${pick}</div><div style="margin-top:8px;color:#666">จ่าย ${fmtNumber(nextCost)} SCA</div>`;
+      // update local streak (we rely on snapshot to update actual values)
+      localState.streak = (localState.streak || 0) + 1;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(localState)); } catch(e){}
+
+      // success UI
+      if (modalBody) modalBody.innerHTML = `<div style="font-weight:700">คุณได้การ์ดใหม่: ${pick}</div><div style="margin-top:8px;color:#666">จ่าย ${fmt(cost)} SCA</div>`;
       if (modal) modal.classList.remove('hidden');
 
-    } catch (err) {
-      console.error('gacha transaction failed', err);
+    } catch (err){
+      console.error('gacha txn failed', err);
       alert('ไม่สามารถสุ่มได้ในขณะนี้ ลองอีกครั้ง');
+    } finally {
+      render();
     }
   }
 
-  // Events
+  // EVENTS
   if (gachaBtn) gachaBtn.addEventListener('click', doGacha);
   if (modalClose) modalClose.addEventListener('click', ()=> modal.classList.add('hidden'));
   if (modal) modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
-
-  if (backBtn) backBtn.addEventListener('click', ()=>{
+  if (backBtn) backBtn.addEventListener('click', ()=> {
     try {
       if (document.referrer && document.referrer.includes(location.host)) history.back();
-      else window.location.href = 'alldata.html';
+      else window.location.href = BACK_FALLBACK;
     } catch(e){ history.back(); }
   });
 
-  // initial render (safe)
+  // AUTH + SNAPSHOT
+  auth.onAuthStateChanged(user => {
+    if (!user) { userUid = null; render(); return; }
+    userUid = user.uid;
+    const userRef = db.collection('users').doc(userUid);
+
+    // subscribe to doc
+    userRef.onSnapshot(snap => {
+      if (!snap.exists) { currentPoints = 0; rawCards = []; ownedNormalized = []; gachaStreak = 0; render(); return; }
+      const d = snap.data() || {};
+
+      currentPoints = Number(d.points || d.sca || d.balance || 0);
+      gachaStreak = Number(d.gachaStreak || 0) || 0;
+
+      // capture raw cards as-is (so we do NOT overwrite them)
+      if (Array.isArray(d.cards)){
+        rawCards = d.cards.slice();
+      } else if (d.cards && typeof d.cards === 'object'){
+        rawCards = Object.values(d.cards);
+      } else {
+        // also detect top-level numeric keys (rare)
+        rawCards = [];
+        Object.keys(d).forEach(k => {
+          if (/^\d+$/.test(k) || /^card\d+$/i.test(k)){
+            rawCards.push(d[k]);
+          }
+        });
+        // if still empty and there is a single primitive field we might skip
+      }
+
+      // create normalized set for logic (do NOT write back)
+      ownedNormalized = Array.from(new Set(rawCards.map(normalizeSingle).filter(Boolean)));
+
+      // ensure sorted
+      ownedNormalized.sort((a,b)=>{
+        const ma = a.match(/(\d+)$/), mb = b.match(/(\d+)$/);
+        const na = ma ? Number(ma[1]) : 1e9, nb = mb ? Number(mb[1]) : 1e9;
+        return na - nb;
+      });
+
+      // update local streak from DB if present
+      if (typeof d.gachaStreak === 'number') {
+        gachaStreak = d.gachaStreak;
+        localState.streak = gachaStreak;
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(localState)); } catch(e){}
+      }
+
+      render();
+      console.log('gacha snapshot:', { points: currentPoints, rawCardsPreview: rawCards.slice(0,10), ownedNormalizedLength: ownedNormalized.length });
+    }, err => {
+      console.error('snapshot error', err);
+      render();
+    });
+  });
+
+  // initial render
   render();
+
 })();
