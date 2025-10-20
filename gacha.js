@@ -1,6 +1,6 @@
-// gacha.js — ปรับ: TOTAL_CARDS=30, แสดง ? แทนค่าที่ไม่ถูกต้อง, ไม่ลบข้อมูลเดิม
+// gacha.js — รุ่นปรับให้แสดง '?' ตลอดเวลา (ไม่แสดงชื่อการ์ด)
 (function(){
-  // CONFIG (แก้ตรงนี้ให้เป็น 30 ตามคำขอ)
+  // CONFIG
   const TOTAL_CARDS = 30;
   const PROGRESSION = [10000,20000,40000,80000,160000,320000,640000,1280000];
   const CAP = 1500000;
@@ -22,18 +22,18 @@
   const streakEl = $('streak');
   const backBtn = $('backBtn');
 
-  // local
+  // local state
   let localState = { streak: 0 };
-  try { const raw = localStorage.getItem(STORAGE_KEY); if(raw) localState = JSON.parse(raw); } catch(e){}
+  try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) localState = JSON.parse(raw); } catch(e){}
 
   // firebase
   const auth = firebase.auth();
   const db = firebase.firestore();
 
-  // runtime state
+  // runtime
   let userUid = null;
-  let rawCards = [];         // original values from DB (kept intact)
-  let ownedNormalized = [];  // normalized 'cardNN' used for logic
+  let rawCards = [];
+  let ownedNormalized = [];
   let currentPoints = 0;
   let gachaStreak = 0;
 
@@ -45,70 +45,50 @@
     return CAP;
   }
 
-  // Normalize single value -> 'cardNN' OR null if nothing numeric
+  // Normalizers (used only for logic; we DO NOT write converted values back)
   function normalizeSingle(v){
     if (v === null || v === undefined) return null;
     const s = String(v).trim();
-    // match "cardNN" (case-insensitive)
     let m = s.match(/^card\s*0*([0-9]+)$/i);
     if (m) return 'card' + Number(m[1]);
-    // pure number
     m = s.match(/^0*([0-9]+)$/);
     if (m) return 'card' + Number(m[1]);
-    // contains digits - take the first numeric group
     m = s.match(/([0-9]+)/);
     if (m) return 'card' + Number(m[1]);
-    // no digit -> not a card
     return null;
   }
-
-  // Build canonical set of owned cards (only cardNN, unique, and within 1..TOTAL_CARDS)
   function normalizeCardsField(raw){
     if (!raw) return [];
     let arr = [];
-    if (Array.isArray(raw)){
-      arr = raw.map(normalizeSingle).filter(Boolean);
-    } else if (typeof raw === 'object'){
-      try {
-        arr = Object.values(raw).map(normalizeSingle).filter(Boolean);
-      } catch(e){ arr = []; }
+    if (Array.isArray(raw)) arr = raw.map(normalizeSingle).filter(Boolean);
+    else if (typeof raw === 'object') {
+      try { arr = Object.values(raw).map(normalizeSingle).filter(Boolean); } catch(e){ arr = []; }
     } else {
-      const x = normalizeSingle(raw);
-      if (x) arr = [x];
+      const v = normalizeSingle(raw);
+      if (v) arr = [v];
     }
-    // ensure numbers within range 1..TOTAL_CARDS and unique
-    const seen = new Set();
-    const out = [];
-    arr.forEach(s => {
+    // enforce range 1..TOTAL_CARDS and uniqueness
+    const seen = new Set(); const out = [];
+    arr.forEach(s=>{
       const m = s.match(/(\d+)$/);
       if (!m) return;
       const n = Number(m[1]);
-      if (n >= 1 && n <= TOTAL_CARDS && !seen.has(s)){
-        seen.add(s);
-        out.push(s);
-      }
+      if (n >= 1 && n <= TOTAL_CARDS && !seen.has(s)){ seen.add(s); out.push(s); }
     });
-    // sort by numeric suffix
-    out.sort((a,b)=> {
-      const na = Number((a.match(/(\d+)$/)||[])[1]||0);
-      const nb = Number((b.match(/(\d+)$/)||[])[1]||0);
-      return na - nb;
-    });
+    out.sort((a,b)=> Number(a.match(/(\d+)$/)[1]) - Number(b.match(/(\d+)$/)[1]));
     return out;
   }
 
-  // compute missing canonical list
-  function computeMissing(){
-    const all = Array.from({length: TOTAL_CARDS}, (_,i) => 'card' + (i+1));
-    const ownedSet = new Set(ownedNormalized);
-    return all.filter(c => !ownedSet.has(c));
+  // compute missing (for count only)
+  function computeMissingCount(){
+    return Math.max(TOTAL_CARDS - ownedNormalized.length, 0);
   }
 
-  // render UI
+  // render — placeholders always show '?'
   function render(){
     if (coinsEl) coinsEl.textContent = fmt(currentPoints);
     if (totalEl) totalEl.textContent = TOTAL_CARDS;
-    if (missingEl) missingEl.textContent = computeMissing().length;
+    if (missingEl) missingEl.textContent = computeMissingCount();
     if (streakEl) streakEl.textContent = String(gachaStreak || localState.streak || 0);
 
     const nextIdx = (localState.streak || 0) + 1;
@@ -116,23 +96,15 @@
     if (gachaBtn) gachaBtn.textContent = `สุ่มการ์ด — ${fmt(nextCost)} SCA`;
     if (costHint) costHint.textContent = `ราคาสุ่มครั้งที่ ${nextIdx}: ${fmt(nextCost)} SCA`;
 
-    // show last 3 ownedNormalized — if not available, show '?'
     if (cardRow){
-      const last = ownedNormalized.slice(-3).reverse(); // newest first
       const placeholders = cardRow.querySelectorAll('.gacha-card');
-      placeholders.forEach((el, idx)=>{
-        const v = last[idx];
-        // only display when v matches "cardNN" exactly
-        if (typeof v === 'string' && /^card\d+$/.test(v)) {
-          el.textContent = v;
-        } else {
-          el.textContent = '?';
-        }
+      placeholders.forEach(el => {
+        el.textContent = '?'; // ALWAYS show '?'
       });
     }
   }
 
-  // backup (best effort)
+  // backup (best-effort)
   async function backupUserDoc(uid){
     try {
       const ref = db.collection('users').doc(uid);
@@ -150,22 +122,25 @@
 
   function pickRandom(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
-  // main action
+  // do gacha: choose from missing (logic uses normalized values) but UI never reveals
   async function doGacha(){
     if (!userUid) { alert('กรุณาเข้าสู่ระบบ'); return; }
-    const missing = computeMissing();
+
+    // Recompute missing set from DB-derived normalized list
+    const all = Array.from({length: TOTAL_CARDS}, (_,i)=>'card'+(i+1));
+    const missing = all.filter(c=> !ownedNormalized.includes(c));
     if (missing.length === 0){ alert('คุณมีครบทุกการ์ดแล้ว'); return; }
 
     const nextIdx = (localState.streak || 0) + 1;
     const cost = clampCost(nextIdx);
     if (currentPoints < cost){ alert(`เหรียญไม่พอ (ต้องการ ${fmt(cost)} SCA)`); return; }
 
-    const pick = pickRandom(missing); // canonical 'cardNN'
+    const pick = pickRandom(missing);
 
-    // backup
+    // backup snapshot before update
     await backupUserDoc(userUid).catch(()=>{});
 
-    // transaction: check points and arrayUnion the canonical card
+    // transaction: re-check points and add via arrayUnion
     const userRef = db.collection('users').doc(userUid);
     try {
       await db.runTransaction(async tx => {
@@ -182,11 +157,12 @@
         });
       });
 
-      // update local streak
+      // update local streak state
       localState.streak = (localState.streak || 0) + 1;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(localState)); } catch(e){}
 
-      if (modalBody) modalBody.innerHTML = `<div style="font-weight:700">คุณได้การ์ดใหม่: ${pick}</div><div style="margin-top:8px;color:#666">จ่าย ${fmt(cost)} SCA</div>`;
+      // show modal but do not disclose which card
+      if (modalBody) modalBody.innerHTML = `<div style="font-weight:700">สุ่มสำเร็จ!</div><div style="margin-top:8px;color:#666">จ่าย ${fmt(cost)} SCA</div>`;
       if (modal) modal.classList.remove('hidden');
 
     } catch (err){
@@ -208,48 +184,46 @@
     } catch(e){ history.back(); }
   });
 
-  // auth + snapshot
+  // auth + realtime sync
   auth.onAuthStateChanged(user => {
-    if (!user) { userUid = null; render(); return; }
+    if (!user) { userUid = null; currentPoints = 0; ownedNormalized = []; gachaStreak = 0; render(); return; }
     userUid = user.uid;
     const ref = db.collection('users').doc(userUid);
     ref.onSnapshot(snap => {
-      if (!snap.exists){
-        currentPoints = 0; rawCards = []; ownedNormalized = []; gachaStreak = 0; render(); return;
-      }
+      if (!snap.exists) { currentPoints = 0; rawCards = []; ownedNormalized = []; gachaStreak = 0; render(); return; }
       const d = snap.data() || {};
       currentPoints = Number(d.points || d.sca || d.balance || 0);
-      gachaStreak = Number(d.gachaStreak || 0) || localState.streak || 0;
+      gachaStreak = Number(d.gachaStreak || 0) || (localState.streak || 0);
 
-      // capture raw values (do not overwrite DB)
+      // capture raw cards (no rewrite)
       if (Array.isArray(d.cards)) rawCards = d.cards.slice();
       else if (d.cards && typeof d.cards === 'object') rawCards = Object.values(d.cards);
       else {
-        // detect numeric keys (legacy)
         rawCards = [];
         Object.keys(d).forEach(k => {
           if (/^\d+$/.test(k) || /^card\d+$/i.test(k)) rawCards.push(d[k]);
         });
       }
 
-      // build normalized canonical set for logic
+      // normalized for logic only
       ownedNormalized = normalizeCardsField(rawCards);
 
-      // if DB provides gachaStreak, sync localState
-      if (typeof d.gachaStreak === 'number') {
+      // sync streak from DB if present
+      if (typeof d.gachaStreak === 'number'){
         gachaStreak = d.gachaStreak;
         localState.streak = gachaStreak;
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(localState)); } catch(e){}
       }
 
       render();
-      console.log('gacha snapshot:', { points: currentPoints, rawCount: rawCards.length, ownedNormalized });
+      console.log('gacha snapshot:', { points: currentPoints, rawCardsLength: rawCards.length, ownedNormalizedLength: ownedNormalized.length });
     }, err => {
       console.error('snapshot error', err);
       render();
     });
   });
 
+  // initial render
   render();
 
 })();
