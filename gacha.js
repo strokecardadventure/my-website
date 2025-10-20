@@ -1,6 +1,4 @@
-// gacha.js — รุ่นปรับให้แสดง '?' ตลอดเวลา (ไม่แสดงชื่อการ์ด)
-// + ป้องกัน overlay/element เก่าที่แสดงประวัติการ์ด
-
+// gacha.js — ปรับให้รีเซ็ต placeholders, ไม่โชว์ประวัติการ์ด, TOTAL_CARDS=30
 (function(){
   // CONFIG
   const TOTAL_CARDS = 30;
@@ -10,7 +8,7 @@
   const BACKUP_SUBCOL = '_backups';
   const BACK_FALLBACK = 'alldata.html';
 
-  // DOM
+  // DOM refs
   const $ = id => document.getElementById(id);
   const coinsEl = $('coins');
   const missingEl = $('missing');
@@ -24,7 +22,7 @@
   const streakEl = $('streak');
   const backBtn = $('backBtn');
 
-  // local state
+  // local
   let localState = { streak: 0 };
   try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) localState = JSON.parse(raw); } catch(e){}
 
@@ -41,13 +39,12 @@
 
   // helpers
   function fmt(n){ return (typeof n === 'number') ? n.toLocaleString() : String(n || 0); }
-  function clampCost(streakIndex){
-    if (streakIndex <= 0) return PROGRESSION[0];
-    if (streakIndex <= PROGRESSION.length) return PROGRESSION[streakIndex-1];
+  function clampCost(idx){
+    if (idx <= 0) return PROGRESSION[0];
+    if (idx <= PROGRESSION.length) return PROGRESSION[idx-1];
     return CAP;
   }
 
-  // Normalizers (used only for logic; we DO NOT write converted values back)
   function normalizeSingle(v){
     if (v === null || v === undefined) return null;
     const s = String(v).trim();
@@ -69,7 +66,6 @@
       const v = normalizeSingle(raw);
       if (v) arr = [v];
     }
-    // enforce range 1..TOTAL_CARDS and uniqueness
     const seen = new Set(); const out = [];
     arr.forEach(s=>{
       const m = s.match(/(\d+)$/);
@@ -81,24 +77,21 @@
     return out;
   }
 
-  // Remove any leftover overlay or element that other code may have injected
-  function removeHistoryOverlay(){
-    // common id/class that earlier versions or test code might have used
-    const ids = ['gachaHistory','historyOverlay','gacha-big-history'];
+  // remove likely legacy overlays / debug nodes
+  function removeLegacyOverlays(){
+    const ids = ['gachaHistory','historyOverlay','gacha-big-history','gacha-history'];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (el && el.parentNode) el.parentNode.removeChild(el);
     });
-    // remove elements with class patterns
-    const clsList = ['gacha-history','big-history','card-history-overlay'];
-    clsList.forEach(c => {
-      document.querySelectorAll('.' + c).forEach(e => {
+    // classes
+    ['big-history','card-history-overlay','history-overlay','gacha-history'].forEach(cls=>{
+      document.querySelectorAll('.' + cls).forEach(e=>{
         if (e && e.parentNode) e.parentNode.removeChild(e);
       });
     });
-    // also hide any leftover large text nodes inside cardRow (best-effort)
+    // Also remove any stray large text nodes directly under cardRow
     if (cardRow){
-      // remove any direct large-text node children (strings)
       Array.from(cardRow.childNodes).forEach(node => {
         if (node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0){
           node.textContent = '';
@@ -107,15 +100,31 @@
     }
   }
 
-  // compute missing (for count only)
+  // rebuild cardRow placeholders (ensures only three cards and no stray overlay)
+  function resetPlaceholders(){
+    if (!cardRow) return;
+    // clear everything then create exactly 3 placeholders
+    cardRow.innerHTML = '';
+    for (let i=0;i<3;i++){
+      const d = document.createElement('div');
+      d.className = 'gacha-card';
+      d.textContent = '?';
+      // ensure styles not overridden inline
+      d.style.fontSize = '';
+      d.style.whiteSpace = 'normal';
+      cardRow.appendChild(d);
+    }
+  }
+
   function computeMissingCount(){
     return Math.max(TOTAL_CARDS - ownedNormalized.length, 0);
   }
 
-  // render — placeholders always show '?'
   function render(){
-    // ensure no overlay from previous code remains
-    removeHistoryOverlay();
+    // remove any legacy/debug overlays first
+    removeLegacyOverlays();
+    // ensure placeholders are fresh
+    resetPlaceholders();
 
     if (coinsEl) coinsEl.textContent = fmt(currentPoints);
     if (totalEl) totalEl.textContent = TOTAL_CARDS;
@@ -127,18 +136,10 @@
     if (gachaBtn) gachaBtn.textContent = `สุ่มการ์ด — ${fmt(nextCost)} SCA`;
     if (costHint) costHint.textContent = `ราคาสุ่มครั้งที่ ${nextIdx}: ${fmt(nextCost)} SCA`;
 
-    if (cardRow){
-      const placeholders = cardRow.querySelectorAll('.gacha-card');
-      placeholders.forEach(el => {
-        // ALWAYS show '?' and ensure style is normal (prevent huge font override)
-        el.textContent = '?';
-        el.style.fontSize = ''; // let CSS control it
-        el.style.whiteSpace = 'normal';
-      });
-    }
+    // placeholders already set to '?', keep them that way
   }
 
-  // backup (best-effort)
+  // backup snapshot (best effort)
   async function backupUserDoc(uid){
     try {
       const ref = db.collection('users').doc(uid);
@@ -146,9 +147,8 @@
       const data = snap.exists ? snap.data() : {};
       const backupRef = ref.collection(BACKUP_SUBCOL).doc(String(Date.now()));
       await backupRef.set({ snapshot: data, ts: firebase.firestore.FieldValue.serverTimestamp() });
-      console.log('backup saved to', backupRef.path);
       return backupRef.path;
-    } catch (e) {
+    } catch(e){
       console.warn('backup failed', e);
       return null;
     }
@@ -156,11 +156,10 @@
 
   function pickRandom(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
-  // do gacha: choose from missing (logic uses normalized values) but UI never reveals
+  // main gacha action (adds canonical 'cardNN' via arrayUnion)
   async function doGacha(){
     if (!userUid) { alert('กรุณาเข้าสู่ระบบ'); return; }
 
-    // Recompute missing set from DB-derived normalized list
     const all = Array.from({length: TOTAL_CARDS}, (_,i)=>'card'+(i+1));
     const missing = all.filter(c=> !ownedNormalized.includes(c));
     if (missing.length === 0){ alert('คุณมีครบทุกการ์ดแล้ว'); return; }
@@ -171,10 +170,9 @@
 
     const pick = pickRandom(missing);
 
-    // backup snapshot before update
+    // backup
     await backupUserDoc(userUid).catch(()=>{});
 
-    // transaction: re-check points and add via arrayUnion
     const userRef = db.collection('users').doc(userUid);
     try {
       await db.runTransaction(async tx => {
@@ -183,7 +181,6 @@
         const d = snap.data() || {};
         const curPoints = Number(d.points || d.sca || d.balance || 0);
         if (curPoints < cost) throw new Error('คะแนนไม่พอ (ขณะทำรายการ)');
-
         tx.update(userRef, {
           points: firebase.firestore.FieldValue.increment(-cost),
           cards: firebase.firestore.FieldValue.arrayUnion(pick),
@@ -191,11 +188,9 @@
         });
       });
 
-      // update local streak state
       localState.streak = (localState.streak || 0) + 1;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(localState)); } catch(e){}
 
-      // show modal but do not disclose which card
       if (modalBody) modalBody.innerHTML = `<div style="font-weight:700">สุ่มสำเร็จ!</div><div style="margin-top:8px;color:#666">จ่าย ${fmt(cost)} SCA</div>`;
       if (modal) modal.classList.remove('hidden');
 
@@ -218,10 +213,12 @@
     } catch(e){ history.back(); }
   });
 
-  // auth + realtime sync
+  // firebase auth + realtime
   auth.onAuthStateChanged(user => {
-    // remove any old overlay immediately when the page loads or user logs out/in
-    removeHistoryOverlay();
+    // remove any old overlays immediately
+    removeLegacyOverlays();
+    // rebuild placeholders
+    resetPlaceholders();
 
     if (!user) { userUid = null; currentPoints = 0; ownedNormalized = []; gachaStreak = 0; render(); return; }
     userUid = user.uid;
@@ -242,30 +239,25 @@
         });
       }
 
-      // normalized for logic only
       ownedNormalized = normalizeCardsField(rawCards);
 
-      // sync streak from DB if present
       if (typeof d.gachaStreak === 'number'){
         gachaStreak = d.gachaStreak;
         localState.streak = gachaStreak;
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(localState)); } catch(e){}
       }
 
-      // IMPORTANT: remove any overlay before render
-      removeHistoryOverlay();
-
+      removeLegacyOverlays();
       render();
-      // don't log full arrays to avoid accidental DOM injection from debug code
-      console.log('gacha snapshot: points updated, owned count =', ownedNormalized.length);
     }, err => {
       console.error('snapshot error', err);
       render();
     });
   });
 
-  // initial render
-  removeHistoryOverlay();
+  // init
+  removeLegacyOverlays();
+  resetPlaceholders();
   render();
 
 })();
